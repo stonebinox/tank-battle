@@ -65,7 +65,7 @@ let nextHeatseekerId = 0;
 let monsterTank = null; // {x, y, angle, health, maxHealth, lastShot}
 const MONSTER_SPAWN_INTERVAL = 120000; // 2 minutes
 const MONSTER_MAX_HEALTH = 20;
-const MONSTER_SIZE = 60; // 2x normal
+const MONSTER_SIZE = 90; // 3x normal
 const MONSTER_SPEED = 1.5; // slower than players
 const MONSTER_SHOOT_INTERVAL = 1500; // shoots every 1.5s
 let monsterBullets = [];
@@ -891,9 +891,10 @@ setInterval(() => {
       continue;
     }
 
-    // Find nearest alive enemy
+    // Find nearest alive enemy (including monster tank)
     let nearestEnemy = null;
     let nearestDistance = Infinity;
+    let isTargetingMonster = false;
 
     for (const [playerId, player] of players.entries()) {
       if (playerId === heatseeker.shooterId || player.isDead || player.isEliminated) {
@@ -907,8 +908,24 @@ setInterval(() => {
       if (distance < nearestDistance) {
         nearestDistance = distance;
         nearestEnemy = player;
+        isTargetingMonster = false;
       }
     }
+
+    // Also check monster tank as a target
+    if (monsterTank && monsterTank.health > 0) {
+      const dx = monsterTank.x - heatseeker.x;
+      const dy = monsterTank.y - heatseeker.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestEnemy = monsterTank;
+        isTargetingMonster = true;
+      }
+    }
+
+    heatseeker.isTargetingMonster = isTargetingMonster;
 
     // Update missile trajectory toward target
     if (nearestEnemy) {
@@ -952,11 +969,47 @@ setInterval(() => {
       const dx = heatseeker.x - nearestEnemy.x;
       const dy = heatseeker.y - nearestEnemy.y;
       const distance = Math.sqrt(dx * dx + dy * dy);
+      const hitRadius = heatseeker.isTargetingMonster ? 50 : 25;
 
-      if (distance < 25) {
+      if (distance < hitRadius) {
         // Hit!
         heatseekers.delete(id);
+        const shooter = players.get(heatseeker.shooterId);
 
+        // Handle monster tank hit
+        if (heatseeker.isTargetingMonster && monsterTank) {
+          monsterTank.health -= 1;
+          monsterTank.lastHit = Date.now();
+          if (shooter) shooter.kills += 1;
+
+          io.emit('monsterHit', {
+            health: monsterTank.health,
+            shooterId: heatseeker.shooterId
+          });
+
+          if (monsterTank.health <= 0) {
+            io.emit('monsterDestroyed', { killerId: heatseeker.shooterId });
+            // Drop 3 power-ups (handled elsewhere - spawn them here)
+            const offsets = [{ x: -40, y: 0 }, { x: 40, y: 0 }, { x: 0, y: -40 }];
+            for (let i = 0; i < 3; i++) {
+              const type = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
+              const powerup = {
+                id: nextPowerupId++,
+                type: type,
+                x: Math.max(30, Math.min(ARENA_WIDTH - 30, monsterTank.x + offsets[i].x)),
+                y: Math.max(30, Math.min(ARENA_HEIGHT - 30, monsterTank.y + offsets[i].y)),
+                spawnTime: Date.now()
+              };
+              powerups.set(powerup.id, powerup);
+              io.emit('powerupSpawned', powerup);
+            }
+            monsterTank = null;
+            monsterBullets = [];
+          }
+          continue;
+        }
+
+        // Handle player hit
         // Check if player has active shield
         const hasShield = nearestEnemy.activePowerups &&
                          nearestEnemy.activePowerups.shield &&
@@ -972,7 +1025,6 @@ setInterval(() => {
         }
 
         nearestEnemy.lives -= 1;
-        const shooter = players.get(heatseeker.shooterId);
         if (shooter) {
           shooter.kills += 1;
         }
