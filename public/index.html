@@ -101,14 +101,27 @@
             background-color: #45a049;
         }
 
-        #powerupLegend {
+        .legends-container {
+            display: flex;
+            gap: 20px;
             margin-top: 20px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        #controlsLegend, #powerupLegend {
             background-color: rgba(42, 42, 42, 0.9);
             border: 2px solid #4CAF50;
             border-radius: 8px;
             padding: 15px 20px;
-            max-width: 800px;
             box-shadow: 0 0 15px rgba(76, 175, 80, 0.2);
+            flex: 1;
+            min-width: 300px;
+            max-width: 400px;
+        }
+
+        #powerupLegend {
+            max-width: 450px;
         }
 
         #powerupLegend h3 {
@@ -184,6 +197,45 @@
             font-size: 0.85em;
             margin-top: 2px;
         }
+
+        #controlsLegend h3 {
+            margin: 0 0 12px 0;
+            color: #4CAF50;
+            font-size: 1.2em;
+            text-align: center;
+        }
+
+        .controls-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .control-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 8px;
+            background-color: rgba(26, 26, 26, 0.6);
+            border-radius: 5px;
+        }
+
+        .control-key {
+            background-color: #4CAF50;
+            color: #fff;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 0.9em;
+            min-width: 80px;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .control-action {
+            color: #fff;
+            font-size: 0.95em;
+        }
     </style>
 </head>
 <body>
@@ -192,9 +244,32 @@
         <div id="playerCount">Players: 0/6</div>
         <canvas id="gameCanvas" width="800" height="600"></canvas>
 
-        <div id="powerupLegend">
-            <h3>Power-Ups</h3>
-            <div class="powerup-grid">
+        <div class="legends-container">
+            <div id="controlsLegend">
+                <h3>Controls</h3>
+                <div class="controls-list">
+                    <div class="control-item">
+                        <div class="control-key">WASD</div>
+                        <div class="control-action">Move tank</div>
+                    </div>
+                    <div class="control-item">
+                        <div class="control-key">Mouse</div>
+                        <div class="control-action">Aim</div>
+                    </div>
+                    <div class="control-item">
+                        <div class="control-key">Click / Space</div>
+                        <div class="control-action">Shoot</div>
+                    </div>
+                    <div class="control-item">
+                        <div class="control-key">E</div>
+                        <div class="control-action">Place land mine (when collected)</div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="powerupLegend">
+                <h3>Power-Ups</h3>
+                <div class="powerup-grid">
                 <div class="powerup-item">
                     <div class="powerup-icon circle" style="background-color: #2196F3;"></div>
                     <div class="powerup-info">
@@ -238,6 +313,7 @@
                     </div>
                 </div>
             </div>
+        </div>
         </div>
 
         <div id="nameScreen">

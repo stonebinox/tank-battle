@@ -868,12 +868,12 @@ io.on('connection', (socket) => {
   });
 });
 
-// Broadcast game state at 60fps
+// Broadcast game state at 10fps (playerMoved handles real-time sync)
 setInterval(() => {
   if (players.size > 0) {
     io.emit('gameState', Array.from(players.values()));
   }
-}, 1000 / 60);
+}, 100);
 
 // Update monster tank AI at ~20fps
 setInterval(() => {
