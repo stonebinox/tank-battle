@@ -100,6 +100,90 @@
         #startButton:active {
             background-color: #45a049;
         }
+
+        #powerupLegend {
+            margin-top: 20px;
+            background-color: rgba(42, 42, 42, 0.9);
+            border: 2px solid #4CAF50;
+            border-radius: 8px;
+            padding: 15px 20px;
+            max-width: 800px;
+            box-shadow: 0 0 15px rgba(76, 175, 80, 0.2);
+        }
+
+        #powerupLegend h3 {
+            margin: 0 0 12px 0;
+            color: #4CAF50;
+            font-size: 1.2em;
+            text-align: center;
+        }
+
+        .powerup-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+        }
+
+        .powerup-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px;
+            background-color: rgba(26, 26, 26, 0.6);
+            border-radius: 5px;
+        }
+
+        .powerup-icon {
+            width: 24px;
+            height: 24px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
+
+        .powerup-icon.circle {
+            border-radius: 50%;
+        }
+
+        .powerup-icon.square {
+            border-radius: 2px;
+        }
+
+        .powerup-icon.diamond {
+            transform: rotate(45deg);
+            border-radius: 2px;
+        }
+
+        .powerup-icon.triangle {
+            width: 0;
+            height: 0;
+            border-left: 12px solid transparent;
+            border-right: 12px solid transparent;
+            border-bottom: 21px solid;
+        }
+
+        .powerup-icon.star {
+            font-size: 24px;
+            line-height: 24px;
+        }
+
+        .powerup-info {
+            flex: 1;
+        }
+
+        .powerup-name {
+            font-weight: bold;
+            color: #fff;
+            font-size: 0.95em;
+        }
+
+        .powerup-desc {
+            color: #aaa;
+            font-size: 0.85em;
+            margin-top: 2px;
+        }
     </style>
 </head>
 <body>
@@ -107,6 +191,54 @@
         <h1>Tank Battle</h1>
         <div id="playerCount">Players: 0/6</div>
         <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+        <div id="powerupLegend">
+            <h3>Power-Ups</h3>
+            <div class="powerup-grid">
+                <div class="powerup-item">
+                    <div class="powerup-icon circle" style="background-color: #2196F3;"></div>
+                    <div class="powerup-info">
+                        <div class="powerup-name">Shield</div>
+                        <div class="powerup-desc">10s invulnerability</div>
+                    </div>
+                </div>
+                <div class="powerup-item">
+                    <div class="powerup-icon square" style="background-color: #f44336;"></div>
+                    <div class="powerup-info">
+                        <div class="powerup-name">Machine Gun</div>
+                        <div class="powerup-desc">10s rapid fire</div>
+                    </div>
+                </div>
+                <div class="powerup-item">
+                    <div class="powerup-icon diamond" style="background-color: #9C27B0;"></div>
+                    <div class="powerup-info">
+                        <div class="powerup-name">Phase</div>
+                        <div class="powerup-desc">10s pass through edges</div>
+                    </div>
+                </div>
+                <div class="powerup-item">
+                    <div class="powerup-icon circle" style="background-color: #00BCD4;"></div>
+                    <div class="powerup-info">
+                        <div class="powerup-name">Freeze</div>
+                        <div class="powerup-desc">Freezes enemy for 5s</div>
+                    </div>
+                </div>
+                <div class="powerup-item">
+                    <div class="powerup-icon triangle" style="border-bottom-color: #FF9800;"></div>
+                    <div class="powerup-info">
+                        <div class="powerup-name">Land Mine</div>
+                        <div class="powerup-desc">Place explosive trap (Press E)</div>
+                    </div>
+                </div>
+                <div class="powerup-item">
+                    <div class="powerup-icon star" style="color: #FFC107;">★</div>
+                    <div class="powerup-info">
+                        <div class="powerup-name">Heat Seeker</div>
+                        <div class="powerup-desc">Homing missile</div>
+                    </div>
+                </div>
+            </div>
+        </div>
 
         <div id="nameScreen">
             <h2>Enter Your Name</h2>
