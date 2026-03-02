@@ -1,0 +1,20 @@
+{
+  "name": "tank-battle",
+  "version": "1.0.0",
+  "description": "Multiplayer tank battle game",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node server/index.js"
+  },
+  "keywords": ["game", "multiplayer", "tank", "socketio"],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.6.1"
+  }
+}

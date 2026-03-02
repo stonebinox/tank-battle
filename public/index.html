@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tank Battle</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #1a1a1a;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            color: #fff;
+        }
+
+        h1 {
+            margin: 20px 0 10px 0;
+            font-size: 2.5em;
+            color: #4CAF50;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+        }
+
+        #playerCount {
+            margin: 10px 0;
+            font-size: 1.2em;
+            color: #888;
+        }
+
+        #gameCanvas {
+            border: 3px solid #4CAF50;
+            box-shadow: 0 0 20px rgba(76, 175, 80, 0.3);
+            background-color: #2a2a2a;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        #nameScreen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(26, 26, 26, 0.95);
+            border: 3px solid #4CAF50;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            box-shadow: 0 0 30px rgba(76, 175, 80, 0.5);
+            z-index: 1000;
+        }
+
+        #nameScreen h2 {
+            margin: 0 0 30px 0;
+            color: #4CAF50;
+            font-size: 2em;
+        }
+
+        #nameInput {
+            width: 250px;
+            padding: 12px;
+            font-size: 16px;
+            border: 2px solid #4CAF50;
+            border-radius: 5px;
+            background-color: #2a2a2a;
+            color: #fff;
+            margin-bottom: 20px;
+            font-family: Arial, sans-serif;
+        }
+
+        #nameInput:focus {
+            outline: none;
+            border-color: #66BB6A;
+            box-shadow: 0 0 10px rgba(76, 175, 80, 0.3);
+        }
+
+        #startButton {
+            padding: 12px 40px;
+            font-size: 18px;
+            font-weight: bold;
+            background-color: #4CAF50;
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        #startButton:hover {
+            background-color: #66BB6A;
+        }
+
+        #startButton:active {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Tank Battle</h1>
+        <div id="playerCount">Players: 0/6</div>
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+        <div id="nameScreen">
+            <h2>Enter Your Name</h2>
+            <input type="text" id="nameInput" placeholder="Your name..." maxlength="20" autofocus>
+            <br>
+            <button id="startButton">Start Game</button>
+        </div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="game.js"></script>
+</body>
+</html>
