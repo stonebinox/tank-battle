@@ -61,6 +61,16 @@ let nextMineId = 0;
 const heatseekers = new Map();
 let nextHeatseekerId = 0;
 
+// Monster Tank state
+let monsterTank = null; // {x, y, angle, health, maxHealth, lastShot}
+const MONSTER_SPAWN_INTERVAL = 120000; // 2 minutes
+const MONSTER_MAX_HEALTH = 20;
+const MONSTER_SIZE = 60; // 2x normal
+const MONSTER_SPEED = 1.5; // slower than players
+const MONSTER_SHOOT_INTERVAL = 1500; // shoots every 1.5s
+let monsterBullets = [];
+let nextMonsterBulletId = 0;
+
 // Helper functions
 function isPositionInsideObstacle(x, y, radius = TANK_SIZE / 2) {
   for (const obstacle of OBSTACLES) {
@@ -153,6 +163,208 @@ function schedulePowerupSpawn() {
   powerupSpawnTimer = setTimeout(spawnPowerup, delay);
 }
 
+// Monster Tank functions
+function spawnMonster() {
+  if (monsterTank !== null) return; // Already exists
+
+  // Spawn at center of map
+  monsterTank = {
+    x: ARENA_WIDTH / 2,
+    y: ARENA_HEIGHT / 2,
+    angle: 0,
+    health: MONSTER_MAX_HEALTH,
+    maxHealth: MONSTER_MAX_HEALTH,
+    lastShot: Date.now()
+  };
+
+  // Broadcast to all clients
+  io.emit('monsterSpawned', {
+    x: monsterTank.x,
+    y: monsterTank.y,
+    health: monsterTank.health,
+    maxHealth: monsterTank.maxHealth
+  });
+
+  console.log('Monster Tank spawned at center!');
+}
+
+function updateMonsterTankAI() {
+  if (!monsterTank) return;
+
+  // Find nearest alive player
+  let nearestPlayer = null;
+  let nearestDistance = Infinity;
+
+  for (const [playerId, player] of players.entries()) {
+    if (player.isDead || player.isEliminated) continue;
+
+    const dx = player.x - monsterTank.x;
+    const dy = player.y - monsterTank.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearestPlayer = player;
+    }
+  }
+
+  if (nearestPlayer) {
+    // Rotate toward nearest player
+    const targetAngle = Math.atan2(nearestPlayer.y - monsterTank.y, nearestPlayer.x - monsterTank.x);
+    let angleDiff = targetAngle - monsterTank.angle;
+    while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+    while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+
+    // Turn slowly
+    const turnRate = 0.05;
+    if (Math.abs(angleDiff) > turnRate) {
+      monsterTank.angle += Math.sign(angleDiff) * turnRate;
+    } else {
+      monsterTank.angle = targetAngle;
+    }
+
+    // Move toward player
+    const oldX = monsterTank.x;
+    const oldY = monsterTank.y;
+    monsterTank.x += Math.cos(monsterTank.angle) * MONSTER_SPEED;
+    monsterTank.y += Math.sin(monsterTank.angle) * MONSTER_SPEED;
+
+    // Avoid obstacles and boundaries
+    if (isPositionInsideObstacle(monsterTank.x, monsterTank.y, MONSTER_SIZE / 2) ||
+        monsterTank.x < MONSTER_SIZE / 2 || monsterTank.x > ARENA_WIDTH - MONSTER_SIZE / 2 ||
+        monsterTank.y < MONSTER_SIZE / 2 || monsterTank.y > ARENA_HEIGHT - MONSTER_SIZE / 2) {
+      // Revert position and try different angle
+      monsterTank.x = oldX;
+      monsterTank.y = oldY;
+      monsterTank.angle += Math.PI / 4; // Turn 45 degrees
+    }
+
+    // Shoot at player
+    const now = Date.now();
+    if (now - monsterTank.lastShot > MONSTER_SHOOT_INTERVAL) {
+      monsterTank.lastShot = now;
+
+      // Fire bullet
+      const barrelLength = MONSTER_SIZE / 2 + 10;
+      const bulletX = monsterTank.x + Math.cos(monsterTank.angle) * barrelLength;
+      const bulletY = monsterTank.y + Math.sin(monsterTank.angle) * barrelLength;
+
+      const bullet = {
+        id: nextMonsterBulletId++,
+        x: bulletX,
+        y: bulletY,
+        velocityX: Math.cos(monsterTank.angle) * 8,
+        velocityY: Math.sin(monsterTank.angle) * 8
+      };
+
+      monsterBullets.push(bullet);
+
+      io.emit('monsterBulletFired', bullet);
+    }
+  }
+
+  // Broadcast updated position
+  io.emit('monsterUpdate', {
+    x: monsterTank.x,
+    y: monsterTank.y,
+    angle: monsterTank.angle,
+    health: monsterTank.health
+  });
+}
+
+function updateMonsterBullets() {
+  for (let i = monsterBullets.length - 1; i >= 0; i--) {
+    const bullet = monsterBullets[i];
+    bullet.x += bullet.velocityX;
+    bullet.y += bullet.velocityY;
+
+    // Check if out of bounds
+    if (bullet.x < 0 || bullet.x > ARENA_WIDTH || bullet.y < 0 || bullet.y > ARENA_HEIGHT) {
+      monsterBullets.splice(i, 1);
+      continue;
+    }
+
+    // Check if hit obstacle
+    if (isPositionInsideObstacle(bullet.x, bullet.y, 4)) {
+      monsterBullets.splice(i, 1);
+      continue;
+    }
+
+    // Check collision with players
+    for (const [playerId, player] of players.entries()) {
+      if (player.isDead || player.isEliminated) continue;
+
+      const dx = bullet.x - player.x;
+      const dy = bullet.y - player.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      if (distance < 20) {
+        // Hit player!
+        monsterBullets.splice(i, 1);
+
+        // Check shield
+        const hasShield = player.activePowerups && player.activePowerups.shield && Date.now() < player.activePowerups.shield;
+        if (hasShield) {
+          io.emit('shieldBlocked', { playerId: playerId, shooterId: 'monster' });
+          break;
+        }
+
+        player.lives -= 1;
+
+        io.emit('playerHit', {
+          playerId: playerId,
+          lives: player.lives,
+          killerId: 'monster',
+          kills: 0
+        });
+
+        if (player.lives <= 0) {
+          player.isDead = true;
+          player.respawnsUsed += 1;
+
+          io.emit('playerDied', {
+            playerId: playerId,
+            killerId: 'monster'
+          });
+
+          if (player.respawnsUsed < player.maxLives) {
+            const timerId = setTimeout(() => {
+              const p = players.get(playerId);
+              if (p && p.isDead) {
+                const spawnPos = getRandomSpawnPosition();
+                p.x = spawnPos.x;
+                p.y = spawnPos.y;
+                p.angle = 0;
+                p.lives = 1;
+                p.isDead = false;
+
+                io.emit('playerRespawned', {
+                  playerId: p.id,
+                  x: p.x,
+                  y: p.y,
+                  angle: p.angle,
+                  lives: p.lives,
+                  respawnsUsed: p.respawnsUsed
+                });
+              }
+              respawnTimers.delete(playerId);
+            }, 3000);
+
+            respawnTimers.set(playerId, timerId);
+          } else {
+            player.isEliminated = true;
+            io.emit('playerEliminated', {
+              playerId: playerId,
+              killerId: 'monster'
+            });
+          }
+        }
+        break;
+      }
+    }
+  }
+}
+
 function checkPowerupPickup(player) {
   for (const [id, powerup] of powerups.entries()) {
     const dx = player.x - powerup.x;
@@ -222,6 +434,16 @@ io.on('connection', (socket) => {
 
     // Send existing power-ups to the new player
     socket.emit('powerupsState', Array.from(powerups.values()));
+
+    // Send monster state if it exists
+    if (monsterTank) {
+      socket.emit('monsterSpawned', {
+        x: monsterTank.x,
+        y: monsterTank.y,
+        health: monsterTank.health,
+        maxHealth: monsterTank.maxHealth
+      });
+    }
 
     // Broadcast new player to everyone
     io.emit('playerJoined', player);
@@ -549,6 +771,68 @@ io.on('connection', (socket) => {
     console.log(`Player ${shooter.name} fired heatseeker`);
   });
 
+  // Handle shootMonster event
+  socket.on('shootMonster', (data) => {
+    const shooter = players.get(socket.id);
+    if (!shooter || shooter.isDead || shooter.isEliminated || !monsterTank) return;
+
+    // Check if bullet actually hits monster (within ~40px)
+    const dx = data.x - monsterTank.x;
+    const dy = data.y - monsterTank.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    if (distance < 40) {
+      // Hit!
+      monsterTank.health -= 1;
+      shooter.kills += 1;
+
+      io.emit('monsterHit', {
+        health: monsterTank.health,
+        shooterId: shooter.id
+      });
+
+      console.log(`Monster hit by ${shooter.name}! Health: ${monsterTank.health}`);
+
+      if (monsterTank.health <= 0) {
+        // Monster destroyed!
+        io.emit('monsterDestroyed', {
+          killerId: shooter.id
+        });
+
+        console.log(`Monster destroyed by ${shooter.name}!`);
+
+        // Drop 3 power-ups when monster destroyed
+        const offsets = [
+          { x: -40, y: 0 },
+          { x: 40, y: 0 },
+          { x: 0, y: -40 }
+        ];
+        for (let i = 0; i < 3; i++) {
+          const type = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
+          const powerup = {
+            id: nextPowerupId++,
+            type: type,
+            x: Math.max(30, Math.min(ARENA_WIDTH - 30, monsterTank.x + offsets[i].x)),
+            y: Math.max(30, Math.min(ARENA_HEIGHT - 30, monsterTank.y + offsets[i].y)),
+            spawnTime: Date.now()
+          };
+          powerups.set(powerup.id, powerup);
+          io.emit('powerupSpawned', powerup);
+
+          setTimeout(() => {
+            if (powerups.has(powerup.id)) {
+              powerups.delete(powerup.id);
+              io.emit('powerupExpired', powerup.id);
+            }
+          }, POWERUP_LIFETIME);
+        }
+
+        monsterTank = null;
+        monsterBullets = [];
+      }
+    }
+  });
+
   // Handle disconnect
   socket.on('disconnect', () => {
     const player = players.get(socket.id);
@@ -590,6 +874,12 @@ setInterval(() => {
     io.emit('gameState', Array.from(players.values()));
   }
 }, 1000 / 60);
+
+// Update monster tank AI at ~20fps
+setInterval(() => {
+  updateMonsterTankAI();
+  updateMonsterBullets();
+}, 50);
 
 // Update heat seeking missiles at 60fps
 setInterval(() => {
@@ -759,6 +1049,16 @@ setInterval(() => {
 
 // Start power-up spawn system
 schedulePowerupSpawn();
+
+// Schedule monster tank spawns every 2 minutes
+setInterval(() => {
+  spawnMonster();
+}, MONSTER_SPAWN_INTERVAL);
+
+// Spawn first monster after 2 minutes
+setTimeout(() => {
+  spawnMonster();
+}, MONSTER_SPAWN_INTERVAL);
 
 // Start server
 const PORT = process.env.PORT || 3000;

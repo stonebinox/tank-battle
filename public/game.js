@@ -204,6 +204,11 @@ let mines = [];
 // Heat seeking missiles state
 let heatseekers = [];
 
+// Monster Tank state
+let monsterTank = null; // {x, y, angle, health, maxHealth}
+let monsterBullets = [];
+let monsterAnnouncement = null; // {text, time}
+
 // Keyboard input state
 const keys = {
     w: false,
@@ -214,6 +219,9 @@ const keys = {
 
 // Handle keyboard input
 document.addEventListener('keydown', (e) => {
+    // Don't capture keys if player hasn't joined yet (typing name)
+    if (!hasJoined) return;
+
     // Initialize audio on first user interaction
     if (!SoundManager.isInitialized) {
         SoundManager.init();
@@ -526,6 +534,58 @@ socket.on('heatseekerExpired', (heatseekerId) => {
     heatseekers = heatseekers.filter(h => h.id !== heatseekerId);
 });
 
+// Handle monster spawned event
+socket.on('monsterSpawned', (data) => {
+    console.log('Monster Tank spawned!', data);
+    monsterTank = {
+        x: data.x,
+        y: data.y,
+        angle: 0,
+        health: data.health,
+        maxHealth: data.maxHealth
+    };
+    // Show announcement
+    monsterAnnouncement = {
+        text: 'MONSTER TANK INCOMING!',
+        time: Date.now()
+    };
+    SoundManager.playExplosion();
+});
+
+// Handle monster update event
+socket.on('monsterUpdate', (data) => {
+    if (monsterTank) {
+        monsterTank.x = data.x;
+        monsterTank.y = data.y;
+        monsterTank.angle = data.angle;
+        monsterTank.health = data.health;
+    }
+});
+
+// Handle monster hit event
+socket.on('monsterHit', (data) => {
+    console.log('Monster hit!', data);
+    if (monsterTank) {
+        monsterTank.health = data.health;
+        monsterTank.flashTime = Date.now();
+    }
+    SoundManager.playExplosion();
+});
+
+// Handle monster destroyed event
+socket.on('monsterDestroyed', (data) => {
+    console.log('Monster destroyed by:', data.killerId);
+    monsterTank = null;
+    monsterBullets = [];
+    SoundManager.playExplosion();
+    SoundManager.playExplosion();
+});
+
+// Handle monster bullet fired event
+socket.on('monsterBulletFired', (bullet) => {
+    monsterBullets.push(bullet);
+});
+
 // Helper function to check if position collides with obstacles
 function isPositionInsideObstacle(x, y, radius = TANK_WIDTH / 2) {
     for (const obstacle of obstacles) {
@@ -739,6 +799,28 @@ function doesBulletHitObstacle(x, y) {
     return false;
 }
 
+// Update monster bullets
+function updateMonsterBullets() {
+    for (let i = monsterBullets.length - 1; i >= 0; i--) {
+        const bullet = monsterBullets[i];
+        bullet.x += bullet.velocityX;
+        bullet.y += bullet.velocityY;
+
+        // Check if bullet is out of bounds
+        if (bullet.x < 0 || bullet.x > ARENA_WIDTH ||
+            bullet.y < 0 || bullet.y > ARENA_HEIGHT) {
+            monsterBullets.splice(i, 1);
+            continue;
+        }
+
+        // Check if bullet hit obstacle
+        if (doesBulletHitObstacle(bullet.x, bullet.y)) {
+            monsterBullets.splice(i, 1);
+            continue;
+        }
+    }
+}
+
 // Update bullets
 function updateBullets() {
     // Update bullet positions
@@ -762,6 +844,23 @@ function updateBullets() {
 
         // Check collision with tanks (only check bullets shot by local player)
         if (bullet.shooterId === localPlayer.id) {
+            // Check collision with monster tank
+            if (monsterTank) {
+                const dx = bullet.x - monsterTank.x;
+                const dy = bullet.y - monsterTank.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < 40) {
+                    // Hit monster!
+                    socket.emit('shootMonster', {
+                        x: bullet.x,
+                        y: bullet.y
+                    });
+                    bullets.splice(i, 1);
+                    continue;
+                }
+            }
+
             for (const id in players) {
                 // Skip if hitting own tank, dead player, or eliminated player
                 if (id === bullet.shooterId || players[id].isDead || players[id].isEliminated) continue;
@@ -1070,6 +1169,119 @@ function drawHeatseeker(heatseeker) {
     ctx.fill();
 
     ctx.restore();
+}
+
+function drawMonsterTank() {
+    if (!monsterTank) return;
+
+    const x = monsterTank.x;
+    const y = monsterTank.y;
+    const angle = monsterTank.angle;
+    const size = 60;
+
+    // Apply flash effect if recently hit (within 200ms)
+    const isFlashing = monsterTank.flashTime && Date.now() - monsterTank.flashTime < 200;
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+
+    if (isFlashing) {
+        ctx.globalAlpha = 0.5;
+    }
+
+    // Monster color - dark red/maroon
+    const bodyColor = '#8B0000';
+    const darkColor = '#5A0000';
+
+    // Draw larger treads
+    ctx.fillStyle = darkColor;
+    ctx.fillRect(-size / 2 - 4, -size / 2 - 6, 8, size + 12);
+    ctx.fillRect(size / 2 - 4, -size / 2 - 6, 8, size + 12);
+
+    // Draw main tank body
+    ctx.fillStyle = bodyColor;
+    ctx.beginPath();
+    roundRect(ctx, -size / 2, -size / 2, size, size * 0.66, 5);
+    ctx.fill();
+
+    // Draw body outline
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    roundRect(ctx, -size / 2, -size / 2, size, size * 0.66, 5);
+    ctx.stroke();
+
+    // Draw spikes for menacing look
+    ctx.fillStyle = '#FF0000';
+    for (let i = 0; i < 4; i++) {
+        const spikeAngle = (i * Math.PI / 2);
+        const spikeX = Math.cos(spikeAngle) * (size / 3);
+        const spikeY = Math.sin(spikeAngle) * (size / 3);
+        ctx.beginPath();
+        ctx.moveTo(spikeX, spikeY);
+        ctx.lineTo(spikeX + Math.cos(spikeAngle) * 8, spikeY + Math.sin(spikeAngle) * 8);
+        ctx.lineTo(spikeX + Math.cos(spikeAngle + 0.3) * 8, spikeY + Math.sin(spikeAngle + 0.3) * 8);
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    // Draw turret (larger)
+    const turretRadius = 14;
+    ctx.fillStyle = bodyColor;
+    ctx.beginPath();
+    ctx.arc(0, 0, turretRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(0, 0, turretRadius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Draw barrel (thicker)
+    const barrelLength = 28;
+    const barrelWidth = 8;
+    ctx.fillStyle = darkColor;
+    ctx.fillRect(0, -barrelWidth / 2, barrelLength, barrelWidth);
+
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(0, -barrelWidth / 2, barrelLength, barrelWidth);
+
+    ctx.restore();
+
+    // Draw health bar above monster
+    const barWidth = 80;
+    const barHeight = 10;
+    const barX = x - barWidth / 2;
+    const barY = y - size / 2 - 20;
+
+    // Background
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(barX - 2, barY - 2, barWidth + 4, barHeight + 4);
+
+    // Health bar
+    const healthPercent = monsterTank.health / monsterTank.maxHealth;
+    ctx.fillStyle = healthPercent > 0.5 ? '#00FF00' : (healthPercent > 0.25 ? '#FFFF00' : '#FF0000');
+    ctx.fillRect(barX, barY, barWidth * healthPercent, barHeight);
+
+    // Border
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(barX, barY, barWidth, barHeight);
+
+    // Health text
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 10px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${monsterTank.health}/${monsterTank.maxHealth}`, x, barY - 5);
+
+    // Draw "MONSTER" label
+    ctx.fillStyle = '#FF0000';
+    ctx.font = 'bold 14px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('MONSTER BOSS', x, y + size / 2 + 15);
 }
 
 function drawObstacles() {
@@ -1403,6 +1615,37 @@ function render() {
         drawHeatseeker(heatseeker);
     }
 
+    // Draw monster tank
+    drawMonsterTank();
+
+    // Draw monster bullets
+    for (const bullet of monsterBullets) {
+        drawBullet(bullet.x, bullet.y, false);
+    }
+
+    // Draw monster announcement
+    if (monsterAnnouncement) {
+        const elapsed = Date.now() - monsterAnnouncement.time;
+        if (elapsed < 3000) {
+            const alpha = elapsed < 2000 ? 1 : 1 - (elapsed - 2000) / 1000;
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(ARENA_WIDTH / 2 - 200, 100, 400, 60);
+            ctx.strokeStyle = '#FF0000';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(ARENA_WIDTH / 2 - 200, 100, 400, 60);
+            ctx.fillStyle = '#FF0000';
+            ctx.font = 'bold 32px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(monsterAnnouncement.text, ARENA_WIDTH / 2, 130);
+            ctx.restore();
+        } else {
+            monsterAnnouncement = null;
+        }
+    }
+
     // Draw power-up HUD
     drawPowerupHUD();
 
@@ -1442,6 +1685,7 @@ function render() {
 function gameLoop() {
     updatePlayer();
     updateBullets();
+    updateMonsterBullets();
     render();
     requestAnimationFrame(gameLoop);
 }
