@@ -326,6 +326,7 @@ socket.on('joined', (playerData) => {
     localPlayer.lives = playerData.lives || 3;
     localPlayer.isDead = playerData.isDead || false;
     localPlayer.isEliminated = playerData.isEliminated || false;
+    localPlayer.spawnTime = playerData.spawnTime;
 });
 
 // Handle obstacles event - receive obstacles from server
@@ -454,6 +455,7 @@ socket.on('playerRespawned', (data) => {
         players[data.playerId].lives = data.lives;
         players[data.playerId].isDead = false;
         players[data.playerId].respawnsUsed = data.respawnsUsed;
+        players[data.playerId].spawnTime = data.spawnTime;
     }
 
     // If local player respawned
@@ -464,6 +466,7 @@ socket.on('playerRespawned', (data) => {
         localPlayer.lives = data.lives;
         localPlayer.isDead = false;
         localPlayer.respawnTime = 0;
+        localPlayer.spawnTime = data.spawnTime;
     }
 });
 
@@ -1121,6 +1124,32 @@ function drawTank(x, y, angle, color, isLocal = false, isDead = false, isElimina
 
             ctx.restore();
         }
+    }
+
+    // Draw spawn immunity effect (for all players)
+    const player = isLocal ? localPlayer : players[Object.keys(players).find(id => players[id].x === x && players[id].y === y)];
+    if (player && player.spawnTime && (Date.now() - player.spawnTime < 3000) && !isDead && !isEliminated) {
+        ctx.save();
+        const pulsePhase = (Date.now() % 400) / 400;
+        const alpha = 0.3 + Math.sin(pulsePhase * Math.PI * 2) * 0.2;
+
+        // Draw pulsing white overlay circle
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = '#FFFFFF';
+        ctx.beginPath();
+        ctx.arc(x, y, TANK_WIDTH / 2 + 8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // Draw immunity ring
+        ctx.save();
+        const ringRadius = 28 + Math.sin(pulsePhase * Math.PI * 2) * 2;
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(x, y, ringRadius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
     }
 
     // Draw eliminated text above tank

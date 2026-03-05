@@ -74,6 +74,11 @@ const MONSTER_SHOOT_INTERVAL = 1500; // shoots every 1.5s
 let monsterBullets = [];
 let nextMonsterBulletId = 0;
 
+// Helper function to check spawn immunity
+function hasSpawnImmunity(player) {
+  return player.spawnTime && (Date.now() - player.spawnTime < 3000);
+}
+
 // Helper functions
 function isPositionInsideObstacle(x, y, radius = TANK_SIZE / 2) {
   for (const obstacle of OBSTACLES) {
@@ -344,6 +349,11 @@ function updateMonsterBullets() {
         // Hit player!
         monsterBullets.splice(i, 1);
 
+        // Check spawn immunity
+        if (hasSpawnImmunity(player)) {
+          break;
+        }
+
         // Check shield
         const hasShield = player.activePowerups && player.activePowerups.shield && Date.now() < player.activePowerups.shield;
         if (hasShield) {
@@ -379,6 +389,7 @@ function updateMonsterBullets() {
                 p.angle = 0;
                 p.lives = 1;
                 p.isDead = false;
+                p.spawnTime = Date.now();
 
                 io.emit('playerRespawned', {
                   playerId: p.id,
@@ -386,7 +397,8 @@ function updateMonsterBullets() {
                   y: p.y,
                   angle: p.angle,
                   lives: p.lives,
-                  respawnsUsed: p.respawnsUsed
+                  respawnsUsed: p.respawnsUsed,
+                  spawnTime: p.spawnTime
                 });
               }
               respawnTimers.delete(playerId);
@@ -463,7 +475,8 @@ io.on('connection', (socket) => {
       kills: 0,
       isEliminated: false,
       isDead: false,
-      activePowerups: {}
+      activePowerups: {},
+      spawnTime: Date.now()
     };
 
     players.set(socket.id, player);
@@ -539,6 +552,11 @@ io.on('connection', (socket) => {
         const distance = Math.sqrt(dx * dx + dy * dy);
 
         if (distance < 30) {
+          // Check spawn immunity
+          if (hasSpawnImmunity(player)) {
+            continue;
+          }
+
           // Mine triggered!
           mines.delete(mineId);
 
@@ -583,6 +601,7 @@ io.on('connection', (socket) => {
                   p.angle = 0;
                   p.lives = 1;
                   p.isDead = false;
+                  p.spawnTime = Date.now();
 
                   io.emit('playerRespawned', {
                     playerId: p.id,
@@ -590,7 +609,8 @@ io.on('connection', (socket) => {
                     y: p.y,
                     angle: p.angle,
                     lives: p.lives,
-                    respawnsUsed: p.respawnsUsed
+                    respawnsUsed: p.respawnsUsed,
+                    spawnTime: p.spawnTime
                   });
                 }
                 respawnTimers.delete(player.id);
@@ -643,6 +663,11 @@ io.on('connection', (socket) => {
     if (data.hitPlayerId) {
       const hitPlayer = players.get(data.hitPlayerId);
       if (hitPlayer && !hitPlayer.isDead && !hitPlayer.isEliminated) {
+        // Check spawn immunity
+        if (hasSpawnImmunity(hitPlayer)) {
+          return;
+        }
+
         // Check if player has active shield
         const hasShield = hitPlayer.activePowerups &&
                          hitPlayer.activePowerups.shield &&
@@ -690,6 +715,7 @@ io.on('connection', (socket) => {
                 player.angle = 0;
                 player.lives = 1;
                 player.isDead = false;
+                player.spawnTime = Date.now();
 
                 io.emit('playerRespawned', {
                   playerId: player.id,
@@ -697,7 +723,8 @@ io.on('connection', (socket) => {
                   y: player.y,
                   angle: player.angle,
                   lives: player.lives,
-                  respawnsUsed: player.respawnsUsed
+                  respawnsUsed: player.respawnsUsed,
+                  spawnTime: player.spawnTime
                 });
 
                 console.log(`Player ${player.name} respawned (${player.respawnsUsed}/${player.maxLives} deaths)`);
@@ -740,6 +767,11 @@ io.on('connection', (socket) => {
     if (data.hitPlayerId) {
       const hitPlayer = players.get(data.hitPlayerId);
       if (hitPlayer && !hitPlayer.isDead && !hitPlayer.isEliminated) {
+        // Check spawn immunity
+        if (hasSpawnImmunity(hitPlayer)) {
+          return;
+        }
+
         // Check if player has active shield
         const hasShield = hitPlayer.activePowerups &&
                          hitPlayer.activePowerups.shield &&
@@ -1089,6 +1121,13 @@ setInterval(() => {
         }
 
         // Handle player hit
+        // Check spawn immunity
+        if (hasSpawnImmunity(nearestEnemy)) {
+          heatseekers.delete(id);
+          io.emit('heatseekerExpired', id);
+          continue;
+        }
+
         // Check if player has active shield
         const hasShield = nearestEnemy.activePowerups &&
                          nearestEnemy.activePowerups.shield &&
@@ -1140,6 +1179,7 @@ setInterval(() => {
                 player.angle = 0;
                 player.lives = 1;
                 player.isDead = false;
+                player.spawnTime = Date.now();
 
                 io.emit('playerRespawned', {
                   playerId: player.id,
@@ -1147,7 +1187,8 @@ setInterval(() => {
                   y: player.y,
                   angle: player.angle,
                   lives: player.lives,
-                  respawnsUsed: player.respawnsUsed
+                  respawnsUsed: player.respawnsUsed,
+                  spawnTime: player.spawnTime
                 });
               }
               respawnTimers.delete(nearestEnemy.id);
