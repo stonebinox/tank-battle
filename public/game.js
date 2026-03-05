@@ -1633,7 +1633,7 @@ function drawScoreboard() {
 
     // Draw each player row
     playerArray.forEach((player, index) => {
-        const rowY = boardY + padding + rowHeight + (index * rowHeight);
+        const rowY = boardY + padding + rowHeight + 10 + (index * rowHeight);
         const isLocalPlayer = player.id === localPlayer.id;
 
         // Highlight local player's row

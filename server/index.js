@@ -241,6 +241,45 @@ function updateMonsterTankAI() {
       monsterTank.angle += Math.PI / 4; // Turn 45 degrees
     }
 
+    // Check for mine collision with monster
+    if (monsterTank) {
+      for (const [mineId, mine] of mines.entries()) {
+        const dx = monsterTank.x - mine.x;
+        const dy = monsterTank.y - mine.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance < 40) { // Larger radius for monster
+          mines.delete(mineId);
+          monsterTank.health -= 1;
+          monsterTank.lastHit = Date.now();
+
+          const mineOwner = players.get(mine.playerId);
+          if (mineOwner) {
+            mineOwner.kills += 1;
+          }
+
+          io.emit('mineExploded', {
+            mineId: mineId,
+            victimId: 'monster',
+            x: mine.x,
+            y: mine.y
+          });
+
+          io.emit('monsterHit', {
+            health: monsterTank.health,
+            shooterId: mine.playerId
+          });
+
+          if (monsterTank.health <= 0) {
+            io.emit('monsterDestroyed', { killerId: mine.playerId });
+            monsterTank = null;
+            monsterBullets = [];
+            break;
+          }
+        }
+      }
+    }
+
     // Shoot at player
     const now = Date.now();
     if (now - monsterTank.lastShot > MONSTER_SHOOT_INTERVAL) {
@@ -1019,6 +1058,7 @@ setInterval(() => {
             health: monsterTank.health,
             shooterId: heatseeker.shooterId
           });
+          io.emit('heatseekerExpired', id);
 
           if (monsterTank.health <= 0) {
             io.emit('monsterDestroyed', { killerId: heatseeker.shooterId });
