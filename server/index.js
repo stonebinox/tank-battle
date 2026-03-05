@@ -56,6 +56,7 @@ let nextPowerupId = 0;
 let powerupSpawnTimer = null;
 let gameStartTime = null;
 const GAME_DURATION = 5 * 60 * 1000; // 5 minutes
+let gameEnded = false;
 
 // Power-up specific state
 const mines = new Map();
@@ -470,6 +471,7 @@ io.on('connection', (socket) => {
     // Start game timer when first player joins
     if (players.size === 1 && gameStartTime === null) {
       gameStartTime = Date.now();
+      gameEnded = false;
       console.log('Game timer started!');
     }
 
@@ -503,6 +505,7 @@ io.on('connection', (socket) => {
 
   // Handle player movement
   socket.on('move', (data) => {
+    if (gameEnded) return;
     const player = players.get(socket.id);
     if (!player || player.isDead || player.isEliminated) return;
 
@@ -622,6 +625,7 @@ io.on('connection', (socket) => {
 
   // Handle shooting
   socket.on('shoot', (data) => {
+    if (gameEnded) return;
     const shooter = players.get(socket.id);
     if (!shooter || shooter.isDead || shooter.isEliminated) return;
 
@@ -934,6 +938,7 @@ setInterval(() => {
         }));
 
       // Emit game over with rankings
+      gameEnded = true;
       io.emit('gameOver', rankings);
       console.log('Game over! Rankings:', rankings);
 

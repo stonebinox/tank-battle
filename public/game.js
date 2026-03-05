@@ -633,6 +633,7 @@ function isPositionInsideObstacle(x, y, radius = TANK_WIDTH / 2) {
 
 // Game logic
 function updatePlayer() {
+    if (gameOverData) return;
     // Don't allow movement if dead or eliminated
     if (localPlayer.isDead || localPlayer.isEliminated) return;
 
