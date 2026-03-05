@@ -248,7 +248,7 @@ function updateMonsterTankAI() {
         const dy = monsterTank.y - mine.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
 
-        if (distance < 40) { // Larger radius for monster
+        if (distance < 55) { // Larger radius for monster
           mines.delete(mineId);
           monsterTank.health -= 1;
           monsterTank.lastHit = Date.now();
@@ -828,7 +828,7 @@ io.on('connection', (socket) => {
     const dy = data.y - monsterTank.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
 
-    if (distance < 40) {
+    if (distance < 55) {
       // Hit!
       monsterTank.health -= 1;
       shooter.kills += 1;
@@ -1041,7 +1041,7 @@ setInterval(() => {
       const dx = heatseeker.x - nearestEnemy.x;
       const dy = heatseeker.y - nearestEnemy.y;
       const distance = Math.sqrt(dx * dx + dy * dy);
-      const hitRadius = heatseeker.isTargetingMonster ? 50 : 25;
+      const hitRadius = heatseeker.isTargetingMonster ? 55 : 25;
 
       if (distance < hitRadius) {
         // Hit!
