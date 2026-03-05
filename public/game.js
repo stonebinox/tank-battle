@@ -209,6 +209,12 @@ let monsterTank = null; // {x, y, angle, health, maxHealth}
 let monsterBullets = [];
 let monsterAnnouncement = null; // {text, time}
 
+// Game timer state
+let gameTimeRemaining = 0;
+
+// Game over state
+let gameOverData = null; // {rankings: [], showTime: timestamp}
+
 // Keyboard input state
 const keys = {
     w: false,
@@ -256,6 +262,16 @@ document.addEventListener('keyup', (e) => {
 
 // Handle shooting with mouse click
 canvas.addEventListener('click', () => {
+    // Check if game over modal is showing
+    if (gameOverData) {
+        const elapsed = Date.now() - gameOverData.showTime;
+        // Only allow dismissal after showing for at least 1 second
+        if (elapsed > 1000) {
+            gameOverData = null;
+        }
+        return;
+    }
+
     // Initialize audio on first user interaction
     if (!SoundManager.isInitialized) {
         SoundManager.init();
@@ -586,6 +602,22 @@ socket.on('monsterBulletFired', (bullet) => {
     monsterBullets.push(bullet);
 });
 
+// Handle game timer event
+socket.on('gameTimer', (remaining) => {
+    gameTimeRemaining = remaining;
+});
+
+// Handle game over event
+socket.on('gameOver', (rankings) => {
+    console.log('Game over! Rankings:', rankings);
+    gameOverData = {
+        rankings: rankings,
+        showTime: Date.now()
+    };
+    SoundManager.playExplosion();
+    SoundManager.playExplosion();
+});
+
 // Helper function to check if position collides with obstacles
 function isPositionInsideObstacle(x, y, radius = TANK_WIDTH / 2) {
     for (const obstacle of obstacles) {
@@ -630,8 +662,15 @@ function updatePlayer() {
     if (dx !== 0 || dy !== 0) {
         // Normalize diagonal movement
         const length = Math.sqrt(dx * dx + dy * dy);
-        dx = (dx / length) * TANK_SPEED;
-        dy = (dy / length) * TANK_SPEED;
+        let speed = TANK_SPEED;
+
+        // Check if player has active speed power-up
+        if (localPlayer.activePowerups.speed && Date.now() < localPlayer.activePowerups.speed) {
+            speed *= 1.5;
+        }
+
+        dx = (dx / length) * speed;
+        dy = (dy / length) * speed;
 
         // Store old position
         const oldX = localPlayer.x;
@@ -1052,6 +1091,35 @@ function drawTank(x, y, angle, color, isLocal = false, isDead = false, isElimina
             ctx.fill();
             ctx.restore();
         }
+
+        // Draw speed effect - green speed lines trailing behind tank
+        if (localPlayer.activePowerups.speed && now < localPlayer.activePowerups.speed) {
+            ctx.save();
+            const pulsePhase = (now % 400) / 400;
+
+            // Draw motion lines behind the tank
+            ctx.translate(x, y);
+            ctx.rotate(angle);
+
+            for (let i = 0; i < 3; i++) {
+                const offset = -15 - (i * 8) - (pulsePhase * 8);
+                const alpha = 0.6 - (i * 0.2) - pulsePhase;
+                const lineLength = 12 - (i * 2);
+
+                if (alpha > 0) {
+                    ctx.strokeStyle = `rgba(50, 255, 50, ${alpha})`;
+                    ctx.lineWidth = 3 - i;
+                    ctx.beginPath();
+                    ctx.moveTo(offset, -5);
+                    ctx.lineTo(offset - lineLength, -5);
+                    ctx.moveTo(offset, 5);
+                    ctx.lineTo(offset - lineLength, 5);
+                    ctx.stroke();
+                }
+            }
+
+            ctx.restore();
+        }
     }
 
     // Draw eliminated text above tank
@@ -1453,6 +1521,30 @@ function drawPowerup(powerup) {
             ctx.fill();
             ctx.stroke();
             break;
+
+        case 'speed':
+            gradient.addColorStop(0, 'rgba(50, 255, 50, 0.5)');
+            gradient.addColorStop(1, 'rgba(50, 255, 50, 0)');
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.arc(x, y, glowSize, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Draw speed icon (green lightning bolt)
+            ctx.fillStyle = '#32FF32';
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(x + size / 4, y - size / 2);
+            ctx.lineTo(x - size / 6, y);
+            ctx.lineTo(x + size / 6, y);
+            ctx.lineTo(x - size / 4, y + size / 2);
+            ctx.lineTo(x + size / 6, y + size / 8);
+            ctx.lineTo(x - size / 8, y + size / 8);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+            break;
     }
 
     ctx.restore();
@@ -1567,6 +1659,117 @@ function drawScoreboard() {
     });
 }
 
+function drawGameTimer() {
+    if (gameTimeRemaining <= 0) return;
+
+    // Convert milliseconds to MM:SS format
+    const totalSeconds = Math.ceil(gameTimeRemaining / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    const timeString = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+
+    // Draw timer at top center of screen
+    ctx.save();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(ARENA_WIDTH / 2 - 60, 5, 120, 30);
+
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(ARENA_WIDTH / 2 - 60, 5, 120, 30);
+
+    // Change color if under 1 minute
+    ctx.fillStyle = totalSeconds < 60 ? '#ff0000' : '#fff';
+    ctx.font = 'bold 20px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(timeString, ARENA_WIDTH / 2, 20);
+    ctx.restore();
+}
+
+function drawGameOver() {
+    if (!gameOverData) return;
+
+    const elapsed = Date.now() - gameOverData.showTime;
+
+    // Auto-dismiss after 10 seconds
+    if (elapsed > 10000) {
+        gameOverData = null;
+        return;
+    }
+
+    // Draw semi-transparent overlay
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+    ctx.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
+
+    // Draw modal background
+    const modalWidth = 400;
+    const modalHeight = 350;
+    const modalX = ARENA_WIDTH / 2 - modalWidth / 2;
+    const modalY = ARENA_HEIGHT / 2 - modalHeight / 2;
+
+    ctx.fillStyle = 'rgba(40, 40, 40, 0.95)';
+    ctx.fillRect(modalX, modalY, modalWidth, modalHeight);
+
+    ctx.strokeStyle = '#FFD700';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(modalX, modalY, modalWidth, modalHeight);
+
+    // Draw title
+    ctx.fillStyle = '#FFD700';
+    ctx.font = 'bold 36px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('GAME OVER', ARENA_WIDTH / 2, modalY + 50);
+
+    // Draw rankings
+    const rankings = gameOverData.rankings;
+    const startY = modalY + 100;
+    const rowHeight = 60;
+
+    rankings.forEach((ranking, index) => {
+        const y = startY + index * rowHeight;
+
+        // Draw rank medal/circle
+        let medalColor;
+        let rankText;
+        if (index === 0) {
+            medalColor = '#FFD700'; // Gold
+            rankText = '1st';
+        } else if (index === 1) {
+            medalColor = '#C0C0C0'; // Silver
+            rankText = '2nd';
+        } else {
+            medalColor = '#CD7F32'; // Bronze
+            rankText = '3rd';
+        }
+
+        ctx.fillStyle = medalColor;
+        ctx.beginPath();
+        ctx.arc(modalX + 50, y, 20, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#000';
+        ctx.font = 'bold 16px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(rankText, modalX + 50, y + 5);
+
+        // Draw player name
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 20px Arial';
+        ctx.textAlign = 'left';
+        ctx.fillText(ranking.name, modalX + 90, y + 5);
+
+        // Draw kills
+        ctx.textAlign = 'right';
+        ctx.fillText(`${ranking.kills} kills`, modalX + modalWidth - 30, y + 5);
+    });
+
+    // Draw dismiss instruction
+    ctx.fillStyle = '#aaa';
+    ctx.font = '14px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('Click anywhere to dismiss', ARENA_WIDTH / 2, modalY + modalHeight - 20);
+}
+
 function render() {
     // Clear canvas
     ctx.fillStyle = '#2a2a2a';
@@ -1651,6 +1854,12 @@ function render() {
 
     // Draw scoreboard
     drawScoreboard();
+
+    // Draw game timer
+    drawGameTimer();
+
+    // Draw game over modal
+    drawGameOver();
 
     // Draw respawn countdown for local player
     if (localPlayer.isDead && localPlayer.respawnTime > 0 && !localPlayer.isEliminated) {

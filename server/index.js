@@ -17,7 +17,7 @@ const MAX_PLAYERS = 6;
 const TANK_SIZE = 40;
 
 // Power-up configuration
-const POWERUP_TYPES = ['shield', 'machinegun', 'phase', 'freeze', 'landmine', 'heatseeker'];
+const POWERUP_TYPES = ['shield', 'machinegun', 'phase', 'freeze', 'landmine', 'heatseeker', 'speed'];
 const MAX_POWERUPS = 3;
 const POWERUP_SPAWN_MIN = 10000; // 10 seconds
 const POWERUP_SPAWN_MAX = 15000; // 15 seconds
@@ -54,6 +54,8 @@ const respawnTimers = new Map();
 const powerups = new Map();
 let nextPowerupId = 0;
 let powerupSpawnTimer = null;
+let gameStartTime = null;
+const GAME_DURATION = 5 * 60 * 1000; // 5 minutes
 
 // Power-up specific state
 const mines = new Map();
@@ -425,6 +427,12 @@ io.on('connection', (socket) => {
     };
 
     players.set(socket.id, player);
+
+    // Start game timer when first player joins
+    if (players.size === 1 && gameStartTime === null) {
+      gameStartTime = Date.now();
+      console.log('Game timer started!');
+    }
 
     // Send current player their info
     socket.emit('joined', player);
@@ -872,6 +880,31 @@ io.on('connection', (socket) => {
 setInterval(() => {
   if (players.size > 0) {
     io.emit('gameState', Array.from(players.values()));
+
+    // Check if game should end
+    if (gameStartTime && Date.now() - gameStartTime >= GAME_DURATION) {
+      // Sort players by kills descending
+      const playerArray = Array.from(players.values());
+      const rankings = playerArray
+        .sort((a, b) => b.kills - a.kills)
+        .slice(0, 3) // Top 3
+        .map((player, index) => ({
+          rank: index + 1,
+          name: player.name,
+          kills: player.kills
+        }));
+
+      // Emit game over with rankings
+      io.emit('gameOver', rankings);
+      console.log('Game over! Rankings:', rankings);
+
+      // Reset game timer
+      gameStartTime = null;
+    } else if (gameStartTime) {
+      // Emit remaining time
+      const remaining = GAME_DURATION - (Date.now() - gameStartTime);
+      io.emit('gameTimer', remaining);
+    }
   }
 }, 100);
 
