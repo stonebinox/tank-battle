@@ -799,6 +799,7 @@ io.on('connection', (socket) => {
 
   // Handle heat seeking missile
   socket.on('heatseeker', (data) => {
+    if (gameEnded) return;
     const shooter = players.get(socket.id);
     if (!shooter || shooter.isDead || shooter.isEliminated) return;
 
@@ -1046,7 +1047,7 @@ setInterval(() => {
       const dx = heatseeker.x - nearestEnemy.x;
       const dy = heatseeker.y - nearestEnemy.y;
       const distance = Math.sqrt(dx * dx + dy * dy);
-      const hitRadius = heatseeker.isTargetingMonster ? 55 : 25;
+      const hitRadius = heatseeker.isTargetingMonster ? 55 : 35;
 
       if (distance < hitRadius) {
         // Hit!
