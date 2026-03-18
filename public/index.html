@@ -8,7 +8,7 @@
         body {
             margin: 0;
             padding: 0;
-            background-color: #1a1a1a;
+            background-color: #2C1E0F;
             font-family: Arial, sans-serif;
             display: flex;
             flex-direction: column;
@@ -21,20 +21,20 @@
         h1 {
             margin: 20px 0 10px 0;
             font-size: 2.5em;
-            color: #4CAF50;
+            color: #D4A456;
             text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
         }
 
         #playerCount {
             margin: 10px 0;
             font-size: 1.2em;
-            color: #888;
+            color: #B89060;
         }
 
         #gameCanvas {
-            border: 3px solid #4CAF50;
-            box-shadow: 0 0 20px rgba(76, 175, 80, 0.3);
-            background-color: #2a2a2a;
+            border: 3px solid #A0845C;
+            box-shadow: 0 0 20px rgba(160, 132, 92, 0.4);
+            background-color: #EDC9AF;
         }
 
         .container {
@@ -48,18 +48,18 @@
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            background-color: rgba(26, 26, 26, 0.95);
-            border: 3px solid #4CAF50;
+            background-color: rgba(44, 30, 15, 0.95);
+            border: 3px solid #D4A456;
             border-radius: 10px;
             padding: 40px;
             text-align: center;
-            box-shadow: 0 0 30px rgba(76, 175, 80, 0.5);
+            box-shadow: 0 0 30px rgba(212, 164, 86, 0.4);
             z-index: 1000;
         }
 
         #nameScreen h2 {
             margin: 0 0 30px 0;
-            color: #4CAF50;
+            color: #D4A456;
             font-size: 2em;
         }
 
@@ -67,9 +67,9 @@
             width: 250px;
             padding: 12px;
             font-size: 16px;
-            border: 2px solid #4CAF50;
+            border: 2px solid #D4A456;
             border-radius: 5px;
-            background-color: #2a2a2a;
+            background-color: #3A2A18;
             color: #fff;
             margin-bottom: 20px;
             font-family: Arial, sans-serif;
@@ -77,16 +77,16 @@
 
         #nameInput:focus {
             outline: none;
-            border-color: #66BB6A;
-            box-shadow: 0 0 10px rgba(76, 175, 80, 0.3);
+            border-color: #E8C080;
+            box-shadow: 0 0 10px rgba(212, 164, 86, 0.3);
         }
 
         #startButton {
             padding: 12px 40px;
             font-size: 18px;
             font-weight: bold;
-            background-color: #4CAF50;
-            color: #fff;
+            background-color: #D4A456;
+            color: #2C1E0F;
             border: none;
             border-radius: 5px;
             cursor: pointer;
@@ -94,11 +94,11 @@
         }
 
         #startButton:hover {
-            background-color: #66BB6A;
+            background-color: #E8C080;
         }
 
         #startButton:active {
-            background-color: #45a049;
+            background-color: #B8883C;
         }
 
         .legends-container {
@@ -110,11 +110,11 @@
         }
 
         #controlsLegend, #powerupLegend {
-            background-color: rgba(42, 42, 42, 0.9);
-            border: 2px solid #4CAF50;
+            background-color: rgba(44, 30, 15, 0.9);
+            border: 2px solid #D4A456;
             border-radius: 8px;
             padding: 15px 20px;
-            box-shadow: 0 0 15px rgba(76, 175, 80, 0.2);
+            box-shadow: 0 0 15px rgba(212, 164, 86, 0.2);
             flex: 1;
             min-width: 300px;
             max-width: 400px;
@@ -126,7 +126,7 @@
 
         #powerupLegend h3 {
             margin: 0 0 12px 0;
-            color: #4CAF50;
+            color: #D4A456;
             font-size: 1.2em;
             text-align: center;
         }
@@ -200,7 +200,7 @@
 
         #controlsLegend h3 {
             margin: 0 0 12px 0;
-            color: #4CAF50;
+            color: #D4A456;
             font-size: 1.2em;
             text-align: center;
         }
@@ -221,8 +221,8 @@
         }
 
         .control-key {
-            background-color: #4CAF50;
-            color: #fff;
+            background-color: #D4A456;
+            color: #2C1E0F;
             padding: 6px 12px;
             border-radius: 4px;
             font-weight: bold;
@@ -324,6 +324,7 @@
             <input type="text" id="nameInput" placeholder="Your name..." maxlength="20" autofocus>
             <br>
             <button id="startButton">Start Game</button>
+            <p id="nameScreenStatus" style="display: none; margin-top: 16px; font-size: 14px;"></p>
         </div>
     </div>
 
