@@ -10,6 +10,7 @@ const playerCountEl = document.getElementById('playerCount');
 const nameScreen = document.getElementById('nameScreen');
 const nameInput = document.getElementById('nameInput');
 const startButton = document.getElementById('startButton');
+const nameScreenStatus = document.getElementById('nameScreenStatus');
 
 // Track if player has joined
 let hasJoined = false;
@@ -180,11 +181,17 @@ let localPlayer = {
     color: '#4CAF50',
     isDead: false,
     isEliminated: false,
-    lives: 3,
+    health: 100,
+    maxHealth: 100,
+    lives: 5,
+    maxLives: 5,
     respawnTime: 0,
     activePowerups: {},
     lastShotTime: 0
 };
+
+// Track whether this client was eliminated this round (blocks re-join)
+let wasEliminatedThisRound = false;
 
 // All players state
 let players = {};
@@ -192,8 +199,10 @@ let players = {};
 // Bullets state
 let bullets = [];
 
-// Obstacles (will be received from server)
-let obstacles = [];
+// Desert map tiles (received from server)
+let mapTiles = [];   // full tile data: {id, type, x, y, width, height, health, ...}
+let obstacles = [];  // derived: only solid tiles for collision (kept in sync)
+
 
 // Power-ups state
 let powerups = [];
@@ -214,6 +223,53 @@ let gameTimeRemaining = 0;
 
 // Game over state
 let gameOverData = null; // {rankings: [], showTime: timestamp}
+
+// Particle system
+const particles = [];
+
+function spawnParticles(x, y, color, count) {
+    const num = count || (5 + Math.floor(Math.random() * 4));
+    for (let i = 0; i < num; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 1.5 + Math.random() * 3;
+        particles.push({
+            x: x,
+            y: y,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed,
+            radius: 2 + Math.random() * 3,
+            color: color,
+            life: 1.0,
+            decay: 1.0 / (30 + Math.random() * 5) // ~0.5s at 60fps
+        });
+    }
+}
+
+function updateParticles() {
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.life -= p.decay;
+        if (p.life <= 0) {
+            particles.splice(i, 1);
+        }
+    }
+}
+
+function drawParticles() {
+    for (const p of particles) {
+        const r = p.radius * p.life;
+        if (r <= 0) continue;
+        ctx.save();
+        ctx.globalAlpha = p.life;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+}
 
 // Keyboard input state
 const keys = {
@@ -298,21 +354,62 @@ function startGame() {
     // Get player name from input, default to "Player" if empty
     const playerName = nameInput.value.trim() || 'Player';
 
+    // Block re-join if eliminated this round
+    if (wasEliminatedThisRound) {
+        nameScreenStatus.textContent = 'You were eliminated this round. Wait for the next round to start.';
+        nameScreenStatus.style.display = 'block';
+        nameScreenStatus.style.color = '#ff6b6b';
+        return;
+    }
+
+    // Check if socket is connected before joining
+    if (!socket.connected) {
+        nameScreenStatus.textContent = 'Cannot connect to server. Open http://localhost:3000 and ensure the server is running (npm start).';
+        nameScreenStatus.style.display = 'block';
+        nameScreenStatus.style.color = '#ff6b6b';
+        return;
+    }
+
     // Initialize audio on user interaction
     SoundManager.init();
 
-    // Hide name screen
-    nameScreen.style.display = 'none';
+    // Show "Joining..." and disable button until we get joined or error
+    nameScreenStatus.textContent = 'Joining game...';
+    nameScreenStatus.style.display = 'block';
+    nameScreenStatus.style.color = '#fff';
+    startButton.disabled = true;
 
-    // Join the game
+    // Join the game (name screen will hide when we receive 'joined')
     socket.emit('join', playerName);
-    hasJoined = true;
 }
 
 // Socket event listeners
 socket.on('connect', () => {
     console.log('Connected to server');
-    // Don't auto-join anymore - wait for user to click Start Game
+    if (nameScreenStatus) {
+        nameScreenStatus.style.display = 'none';
+        nameScreenStatus.textContent = '';
+    }
+});
+
+socket.on('connect_error', (err) => {
+    console.error('Connection failed:', err);
+    if (nameScreenStatus) {
+        nameScreenStatus.textContent = 'Connection failed. Is the server running? (npm start)';
+        nameScreenStatus.style.display = 'block';
+        nameScreenStatus.style.color = '#ff6b6b';
+    }
+});
+
+socket.on('error', (message) => {
+    console.error('Server error:', message);
+    hasJoined = false;
+    if (startButton) startButton.disabled = false;
+    if (nameScreenStatus) {
+        nameScreenStatus.textContent = message || 'Could not join game.';
+        nameScreenStatus.style.display = 'block';
+        nameScreenStatus.style.color = '#ff6b6b';
+    }
 });
 
 // Handle joined event - server assigns id, position, color
@@ -323,16 +420,44 @@ socket.on('joined', (playerData) => {
     localPlayer.y = playerData.y;
     localPlayer.angle = playerData.angle;
     localPlayer.color = playerData.color;
-    localPlayer.lives = playerData.lives || 3;
+    localPlayer.health = playerData.health ?? 100;
+    localPlayer.maxHealth = playerData.maxHealth ?? 100;
+    localPlayer.lives = playerData.lives || 5;
+    localPlayer.maxLives = playerData.maxLives || 5;
     localPlayer.isDead = playerData.isDead || false;
     localPlayer.isEliminated = playerData.isEliminated || false;
     localPlayer.spawnTime = playerData.spawnTime;
+    localPlayer.respawnsUsed = playerData.respawnsUsed || 0;
+
+    hasJoined = true;
+    nameScreen.style.display = 'none';
+    nameScreenStatus.style.display = 'none';
+    nameScreenStatus.textContent = '';
+    startButton.disabled = false;
 });
 
-// Handle obstacles event - receive obstacles from server
-socket.on('obstacles', (obstaclesData) => {
-    console.log('Received obstacles:', obstaclesData);
-    obstacles = obstaclesData;
+// Handle desert map tiles from server
+socket.on('mapTiles', (tilesData) => {
+    mapTiles = tilesData;
+    obstacles = mapTiles.filter(t => t.type === 'sandstone' || t.type === 'border' || (t.type === 'cactus' && t.health > 0));
+});
+
+// Handle tile updated (cactus damaged)
+socket.on('tileUpdated', (data) => {
+    const tile = mapTiles.find(t => t.id === data.id);
+    if (tile) {
+        tile.health = data.health;
+        obstacles = mapTiles.filter(t => t.type === 'sandstone' || t.type === 'border' || (t.type === 'cactus' && t.health > 0));
+    }
+});
+
+// Handle tile destroyed (cactus removed)
+socket.on('tileDestroyed', (tileId) => {
+    const tile = mapTiles.find(t => t.id === tileId);
+    if (tile) {
+        tile.health = 0;
+        obstacles = mapTiles.filter(t => t.type === 'sandstone' || t.type === 'border' || (t.type === 'cactus' && t.health > 0));
+    }
 });
 
 // Handle power-ups state - receive existing power-ups when joining
@@ -421,6 +546,8 @@ socket.on('playerHit', (data) => {
     if (players[data.playerId]) {
         players[data.playerId].flashTime = Date.now();
         players[data.playerId].lives = data.lives;
+        if (data.health !== undefined) players[data.playerId].health = data.health;
+        if (data.maxHealth !== undefined) players[data.playerId].maxHealth = data.maxHealth;
     }
     // Update killer's score
     if (players[data.killerId]) {
@@ -453,6 +580,8 @@ socket.on('playerRespawned', (data) => {
         players[data.playerId].y = data.y;
         players[data.playerId].angle = data.angle;
         players[data.playerId].lives = data.lives;
+        if (data.health !== undefined) players[data.playerId].health = data.health;
+        if (data.maxHealth !== undefined) players[data.playerId].maxHealth = data.maxHealth;
         players[data.playerId].isDead = false;
         players[data.playerId].respawnsUsed = data.respawnsUsed;
         players[data.playerId].spawnTime = data.spawnTime;
@@ -464,6 +593,8 @@ socket.on('playerRespawned', (data) => {
         localPlayer.y = data.y;
         localPlayer.angle = data.angle;
         localPlayer.lives = data.lives;
+        localPlayer.health = data.health ?? localPlayer.health;
+        localPlayer.maxHealth = data.maxHealth ?? localPlayer.maxHealth;
         localPlayer.isDead = false;
         localPlayer.respawnTime = 0;
         localPlayer.spawnTime = data.spawnTime;
@@ -483,6 +614,7 @@ socket.on('playerEliminated', (data) => {
         localPlayer.isEliminated = true;
         localPlayer.isDead = true;
         localPlayer.respawnTime = 0;
+        wasEliminatedThisRound = true;
     }
 });
 
@@ -621,6 +753,52 @@ socket.on('gameOver', (rankings) => {
     SoundManager.playExplosion();
 });
 
+// Handle round over — server resets, show name screen for next round
+socket.on('roundOver', () => {
+    console.log('Round over — ready for next round');
+    hasJoined = false;
+    wasEliminatedThisRound = false;
+    localPlayer = {
+        id: null,
+        x: ARENA_WIDTH / 2,
+        y: ARENA_HEIGHT / 2,
+        angle: 0,
+        color: '#4CAF50',
+        isDead: false,
+        isEliminated: false,
+        health: 100,
+        maxHealth: 100,
+        lives: 5,
+        maxLives: 5,
+        respawnTime: 0,
+        activePowerups: {},
+        lastShotTime: 0
+    };
+    players = {};
+    bullets = [];
+    mines = [];
+    heatseekers = [];
+    monsterTank = null;
+    monsterBullets = [];
+    powerups = [];
+    mapTiles = [];
+    obstacles = [];
+    particles.length = 0;
+    gameTimeRemaining = 0;
+
+    // Show name screen again after a delay (let game-over modal show first)
+    setTimeout(() => {
+        gameOverData = null;
+        nameScreen.style.display = '';
+        startButton.disabled = false;
+        if (nameScreenStatus) {
+            nameScreenStatus.textContent = 'New round! Enter your name to join.';
+            nameScreenStatus.style.display = 'block';
+            nameScreenStatus.style.color = '#D4A456';
+        }
+    }, 8000);
+});
+
 // Helper function to check if position collides with obstacles
 function isPositionInsideObstacle(x, y, radius = TANK_WIDTH / 2) {
     for (const obstacle of obstacles) {
@@ -707,8 +885,8 @@ function updatePlayer() {
             localPlayer.y = Math.max(TANK_HEIGHT / 2, Math.min(ARENA_HEIGHT - TANK_HEIGHT / 2, localPlayer.y));
         }
 
-        // Check collision with obstacles (unless phasing allows ghosting through)
-        if (isPositionInsideObstacle(localPlayer.x, localPlayer.y)) {
+        // Check collision with obstacles (skip while Phase is active)
+        if (!hasPhase && isPositionInsideObstacle(localPlayer.x, localPlayer.y)) {
             // Revert position if colliding
             localPlayer.x = oldX;
             localPlayer.y = oldY;
@@ -829,16 +1007,31 @@ function placeLandmine() {
     }
 }
 
-// Helper function to check if bullet collides with obstacles
-function doesBulletHitObstacle(x, y) {
-    for (const obstacle of obstacles) {
-        if (x >= obstacle.x &&
-            x <= obstacle.x + obstacle.width &&
-            y >= obstacle.y &&
-            y <= obstacle.y + obstacle.height) {
-            return true;
+// Bullet-vs-tiles collision (swept) to avoid tunneling through thin walls at high speed.
+function doesBulletHitObstacleSegment(x0, y0, x1, y1, reportCactus = false) {
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    const dist = Math.hypot(dx, dy);
+    const steps = Math.max(1, Math.ceil(dist / 4)); // sample every ~4px
+
+    for (let s = 0; s <= steps; s++) {
+        const t = s / steps;
+        const x = x0 + dx * t;
+        const y = y0 + dy * t;
+
+        for (const tile of obstacles) {
+            if (x >= tile.x &&
+                x <= tile.x + tile.width &&
+                y >= tile.y &&
+                y <= tile.y + tile.height) {
+                if (reportCactus && tile.type === 'cactus' && tile.health > 0) {
+                    socket.emit('hitCactus', { x, y });
+                }
+                return true;
+            }
         }
     }
+
     return false;
 }
 
@@ -846,6 +1039,8 @@ function doesBulletHitObstacle(x, y) {
 function updateMonsterBullets() {
     for (let i = monsterBullets.length - 1; i >= 0; i--) {
         const bullet = monsterBullets[i];
+        const prevX = bullet.x;
+        const prevY = bullet.y;
         bullet.x += bullet.velocityX;
         bullet.y += bullet.velocityY;
 
@@ -856,8 +1051,9 @@ function updateMonsterBullets() {
             continue;
         }
 
-        // Check if bullet hit obstacle
-        if (doesBulletHitObstacle(bullet.x, bullet.y)) {
+        // Check if bullet hit obstacle (swept)
+        if (doesBulletHitObstacleSegment(prevX, prevY, bullet.x, bullet.y, false)) {
+            spawnParticles(bullet.x, bullet.y, '#C4A56E');
             monsterBullets.splice(i, 1);
             continue;
         }
@@ -869,6 +1065,8 @@ function updateBullets() {
     // Update bullet positions
     for (let i = bullets.length - 1; i >= 0; i--) {
         const bullet = bullets[i];
+        const prevX = bullet.x;
+        const prevY = bullet.y;
         bullet.x += bullet.velocityX;
         bullet.y += bullet.velocityY;
 
@@ -879,8 +1077,10 @@ function updateBullets() {
             continue;
         }
 
-        // Check if bullet hit obstacle
-        if (doesBulletHitObstacle(bullet.x, bullet.y)) {
+        // Check if bullet hit obstacle (report cactus damage for local player's bullets)
+        const isLocalBullet = bullet.shooterId === localPlayer.id;
+        if (doesBulletHitObstacleSegment(prevX, prevY, bullet.x, bullet.y, isLocalBullet)) {
+            spawnParticles(bullet.x, bullet.y, '#C4A56E');
             bullets.splice(i, 1);
             continue;
         }
@@ -894,7 +1094,7 @@ function updateBullets() {
                 const distance = Math.sqrt(dx * dx + dy * dy);
 
                 if (distance < 40) {
-                    // Hit monster!
+                    spawnParticles(bullet.x, bullet.y, '#FF4444');
                     socket.emit('shootMonster', {
                         x: bullet.x,
                         y: bullet.y
@@ -905,30 +1105,30 @@ function updateBullets() {
             }
 
             for (const id in players) {
-                // Skip if hitting own tank, dead player, or eliminated player
                 if (id === bullet.shooterId || players[id].isDead || players[id].isEliminated) continue;
 
                 const player = players[id];
+
+                // Skip players with spawn immunity — bullets pass through
+                if (player.spawnTime && (Date.now() - player.spawnTime < 3000)) continue;
+
                 const dx = bullet.x - player.x;
                 const dy = bullet.y - player.y;
                 const distance = Math.sqrt(dx * dx + dy * dy);
 
-                // Check if bullet hit tank
                 if (distance < COLLISION_DISTANCE) {
-                    // Check if it's a freeze bullet
+                    spawnParticles(bullet.x, bullet.y, player.color || '#FFA500');
                     if (bullet.isFreeze) {
                         socket.emit('freezeBullet', {
                             ...bullet,
                             hitPlayerId: id
                         });
                     } else {
-                        // Emit hit event to server
                         socket.emit('shoot', {
                             ...bullet,
                             hitPlayerId: id
                         });
                     }
-                    // Remove bullet
                     bullets.splice(i, 1);
                     break;
                 }
@@ -986,19 +1186,30 @@ function drawTank(x, y, angle, color, isLocal = false, isDead = false, isElimina
     ctx.translate(x, y);
     ctx.rotate(angle);
 
-    // Apply flash effect if recently hit (within 200ms)
-    const isFlashing = Date.now() - flashTime < 200;
+    // White hit-flash for ~2 frames (33ms) on damage, then fade for remainder
+    const hitAge = Date.now() - flashTime;
+    const isWhiteFlash = hitAge < 33;
+    const isFading = !isWhiteFlash && hitAge < 200;
 
     // Apply gray out effect if dead or eliminated
     if (isDead || isEliminated) {
         ctx.globalAlpha = 0.3;
-    } else if (isFlashing) {
-        ctx.globalAlpha = 0.5;
+    } else if (isFading) {
+        ctx.globalAlpha = 0.6;
     }
 
-    // Determine colors
-    const bodyColor = (isDead || isEliminated) ? '#666' : color;
-    const darkColor = (isDead || isEliminated) ? '#444' : shadeColor(color, -40);
+    // Determine colors — override everything to white during hit flash
+    let bodyColor, darkColor;
+    if (isWhiteFlash && !isDead && !isEliminated) {
+        bodyColor = '#FFFFFF';
+        darkColor = '#DDDDDD';
+    } else if (isDead || isEliminated) {
+        bodyColor = '#666';
+        darkColor = '#444';
+    } else {
+        bodyColor = color;
+        darkColor = shadeColor(color, -40);
+    }
     const outlineColor = isLocal ? '#fff' : '#000';
     const outlineWidth = isLocal ? 2.5 : 1.5;
 
@@ -1126,29 +1337,44 @@ function drawTank(x, y, angle, color, isLocal = false, isDead = false, isElimina
         }
     }
 
-    // Draw spawn immunity effect (for all players)
-    const player = isLocal ? localPlayer : players[Object.keys(players).find(id => players[id].x === x && players[id].y === y)];
-    if (player && player.spawnTime && (Date.now() - player.spawnTime < 3000) && !isDead && !isEliminated) {
-        ctx.save();
-        const pulsePhase = (Date.now() % 400) / 400;
-        const alpha = 0.3 + Math.sin(pulsePhase * Math.PI * 2) * 0.2;
+    // Resolve the player object once for effects below
+    const effectPlayer = isLocal ? localPlayer : players[Object.keys(players).find(id => players[id].x === x && players[id].y === y)];
 
-        // Draw pulsing white overlay circle
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = '#FFFFFF';
-        ctx.beginPath();
-        ctx.arc(x, y, TANK_WIDTH / 2 + 8, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
+    // Draw spawn shield (3-second blue bubble after respawn)
+    if (effectPlayer && effectPlayer.spawnTime && (Date.now() - effectPlayer.spawnTime < 3000) && !isDead && !isEliminated) {
+        const shieldAge = Date.now() - effectPlayer.spawnTime;
+        const shieldTimeLeft = Math.ceil((3000 - shieldAge) / 1000);
+        const pulsePhase = (Date.now() % 500) / 500;
+        const ringRadius = 25 + Math.sin(pulsePhase * Math.PI * 2) * 3;
 
-        // Draw immunity ring
+        // Outer glow
         ctx.save();
-        const ringRadius = 28 + Math.sin(pulsePhase * Math.PI * 2) * 2;
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
-        ctx.lineWidth = 3;
+        const gradient = ctx.createRadialGradient(x, y, ringRadius - 5, x, y, ringRadius + 5);
+        gradient.addColorStop(0, 'rgba(100, 150, 255, 0)');
+        gradient.addColorStop(0.5, 'rgba(100, 150, 255, 0.6)');
+        gradient.addColorStop(1, 'rgba(100, 150, 255, 0)');
+        ctx.strokeStyle = gradient;
+        ctx.lineWidth = 8;
         ctx.beginPath();
         ctx.arc(x, y, ringRadius, 0, Math.PI * 2);
         ctx.stroke();
+        ctx.restore();
+
+        // Inner ring
+        ctx.save();
+        ctx.strokeStyle = 'rgba(100, 150, 255, 0.8)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(x, y, ringRadius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+
+        // Shield countdown label
+        ctx.save();
+        ctx.fillStyle = '#6496FF';
+        ctx.font = 'bold 11px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(`SHIELD ${shieldTimeLeft}s`, x, y - 28);
         ctx.restore();
     }
 
@@ -1161,8 +1387,7 @@ function drawTank(x, y, angle, color, isLocal = false, isDead = false, isElimina
     }
 
     // Draw frozen effect if player is frozen
-    const player = isLocal ? localPlayer : players[Object.keys(players).find(id => players[id].x === x && players[id].y === y)];
-    if (player && player.frozenUntil && Date.now() < player.frozenUntil) {
+    if (effectPlayer && effectPlayer.frozenUntil && Date.now() < effectPlayer.frozenUntil) {
         // Draw cyan ice tint over tank
         ctx.save();
         ctx.globalAlpha = 0.5;
@@ -1382,20 +1607,115 @@ function drawMonsterTank() {
     ctx.fillText('MONSTER BOSS', x, y + size / 2 + 15);
 }
 
-function drawObstacles() {
-    ctx.fillStyle = '#4a4a4a';
-    ctx.strokeStyle = '#666';
-    ctx.lineWidth = 2;
+function drawDesertMap() {
+    for (const tile of mapTiles) {
+        if (tile.type === 'border') {
+            // Border walls: dark rugged stone
+            ctx.fillStyle = '#5A4030';
+            ctx.fillRect(tile.x, tile.y, tile.width, tile.height);
+            ctx.strokeStyle = '#3E2A1A';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(tile.x, tile.y, tile.width, tile.height);
 
-    for (const obstacle of obstacles) {
-        ctx.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
-        ctx.strokeRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+            // Stone texture lines
+            ctx.strokeStyle = '#4A3525';
+            ctx.lineWidth = 0.5;
+            if (tile.width > tile.height) {
+                for (let bx = tile.x + 16; bx < tile.x + tile.width; bx += 16) {
+                    ctx.beginPath();
+                    ctx.moveTo(bx, tile.y);
+                    ctx.lineTo(bx, tile.y + tile.height);
+                    ctx.stroke();
+                }
+            } else {
+                for (let by = tile.y + 16; by < tile.y + tile.height; by += 16) {
+                    ctx.beginPath();
+                    ctx.moveTo(tile.x, by);
+                    ctx.lineTo(tile.x + tile.width, by);
+                    ctx.stroke();
+                }
+            }
+        }
+
+        if (tile.type === 'sandstone') {
+            ctx.fillStyle = '#8B7355';
+            ctx.fillRect(tile.x, tile.y, tile.width, tile.height);
+
+            ctx.strokeStyle = '#6B5340';
+            ctx.lineWidth = 1;
+            const brickH = 8;
+            for (let by = tile.y; by < tile.y + tile.height; by += brickH) {
+                ctx.beginPath();
+                ctx.moveTo(tile.x, by);
+                ctx.lineTo(tile.x + tile.width, by);
+                ctx.stroke();
+                const row = Math.floor((by - tile.y) / brickH);
+                const offset = (row % 2 === 0) ? 0 : 12;
+                for (let bx = tile.x + offset; bx < tile.x + tile.width; bx += 24) {
+                    ctx.beginPath();
+                    ctx.moveTo(bx, by);
+                    ctx.lineTo(bx, Math.min(by + brickH, tile.y + tile.height));
+                    ctx.stroke();
+                }
+            }
+
+            ctx.strokeStyle = '#5A3E28';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(tile.x, tile.y, tile.width, tile.height);
+        }
+
+        if (tile.type === 'cactus' && tile.health > 0) {
+            const cx = tile.cx || (tile.x + tile.width / 2);
+            const cy = tile.cy || (tile.y + tile.height / 2);
+            const r = tile.radius || (tile.width / 2);
+
+            ctx.fillStyle = tile.health === 1 ? '#6B8E3A' : '#2E8B2E';
+            ctx.strokeStyle = '#1A5C1A';
+            ctx.lineWidth = 2;
+
+            ctx.beginPath();
+            ctx.ellipse(cx, cy, r * 0.35, r * 0.9, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.ellipse(cx - r * 0.45, cy - r * 0.1, r * 0.2, r * 0.45, -0.3, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.ellipse(cx + r * 0.45, cy - r * 0.25, r * 0.2, r * 0.4, 0.3, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.strokeStyle = '#AACC88';
+            ctx.lineWidth = 1;
+            for (let i = 0; i < 6; i++) {
+                const angle = (i / 6) * Math.PI * 2;
+                const sx = cx + Math.cos(angle) * r * 0.35;
+                const sy = cy + Math.sin(angle) * r * 0.6;
+                ctx.beginPath();
+                ctx.moveTo(sx, sy);
+                ctx.lineTo(sx + Math.cos(angle) * 4, sy + Math.sin(angle) * 4);
+                ctx.stroke();
+            }
+
+            if (tile.health === 1) {
+                ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(cx - 2, cy - r * 0.5);
+                ctx.lineTo(cx + 1, cy);
+                ctx.lineTo(cx - 1, cy + r * 0.4);
+                ctx.stroke();
+            }
+        }
     }
 }
 
 function drawArenaBorder() {
-    ctx.strokeStyle = '#888';
-    ctx.lineWidth = 4;
+    ctx.strokeStyle = '#3E2A1A';
+    ctx.lineWidth = 2;
     ctx.strokeRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
 }
 
@@ -1631,6 +1951,49 @@ function drawPowerupHUD() {
     }
 }
 
+function drawLivesHUD() {
+    if (!localPlayer.id || !hasJoined) return;
+
+    const x = 10;
+    const y = 10;
+    const maxLives = localPlayer.maxLives || 5;
+    const currentLives = localPlayer.isEliminated ? 0 : (localPlayer.isDead ? 0 : (localPlayer.lives || 0));
+    const heartSize = 16;
+    const spacing = 4;
+
+    // Background panel
+    const panelWidth = (heartSize + spacing) * maxLives + spacing + 10;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(x, y, panelWidth, 36);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x, y, panelWidth, 36);
+
+    // Label
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 10px Arial';
+    ctx.textAlign = 'left';
+    ctx.fillText('LIVES', x + 5, y + 12);
+
+    // Heart icons
+    for (let i = 0; i < maxLives; i++) {
+        const hx = x + 5 + i * (heartSize + spacing) + heartSize / 2;
+        const hy = y + 25;
+        const alive = i < currentLives;
+
+        ctx.fillStyle = alive ? '#FF4444' : '#444';
+        ctx.beginPath();
+        const r = heartSize / 4;
+        ctx.arc(hx - r, hy - r, r, Math.PI, 0, false);
+        ctx.arc(hx + r, hy - r, r, Math.PI, 0, false);
+        ctx.lineTo(hx + heartSize / 2, hy + heartSize / 3);
+        ctx.lineTo(hx, hy + heartSize / 2);
+        ctx.lineTo(hx - heartSize / 2, hy + heartSize / 3);
+        ctx.closePath();
+        ctx.fill();
+    }
+}
+
 function drawScoreboard() {
     // Convert players object to array and sort by kills (highest first)
     const playerArray = Object.values(players).sort((a, b) => (b.kills || 0) - (a.kills || 0));
@@ -1801,15 +2164,15 @@ function drawGameOver() {
 }
 
 function render() {
-    // Clear canvas
-    ctx.fillStyle = '#2a2a2a';
+    // Clear canvas — warm sand background
+    ctx.fillStyle = '#EDC9AF';
     ctx.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
 
     // Draw arena border
     drawArenaBorder();
 
-    // Draw obstacles
-    drawObstacles();
+    // Draw desert map (border walls, sandstone walls, cacti)
+    drawDesertMap();
 
     // Draw power-ups
     for (const powerup of powerups) {
@@ -1834,7 +2197,7 @@ function render() {
             player.isDead || false,
             player.isEliminated || false,
             player.flashTime || 0,
-            player.lives || 3
+            player.lives || 0
         );
     }
 
@@ -1855,6 +2218,9 @@ function render() {
     for (const bullet of monsterBullets) {
         drawBullet(bullet.x, bullet.y, false);
     }
+
+    // Draw particles (impact sparks)
+    drawParticles();
 
     // Draw monster announcement
     if (monsterAnnouncement) {
@@ -1878,6 +2244,9 @@ function render() {
             monsterAnnouncement = null;
         }
     }
+
+    // Draw lives HUD (top-left)
+    drawLivesHUD();
 
     // Draw power-up HUD
     drawPowerupHUD();
@@ -1925,6 +2294,7 @@ function gameLoop() {
     updatePlayer();
     updateBullets();
     updateMonsterBullets();
+    updateParticles();
     render();
     requestAnimationFrame(gameLoop);
 }

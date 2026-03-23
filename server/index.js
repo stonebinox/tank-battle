@@ -24,26 +24,106 @@ const POWERUP_SPAWN_MAX = 15000; // 15 seconds
 const POWERUP_LIFETIME = 30000; // 30 seconds
 const POWERUP_PICKUP_DISTANCE = 25;
 
-// Obstacles - tactical layout with corners, corridors, and central structures
-const OBSTACLES = [
-  // Corner cover spots (L-shaped corners)
-  { x: 60, y: 60, width: 80, height: 20 },      // Top-left horizontal
-  { x: 60, y: 60, width: 20, height: 80 },      // Top-left vertical
-  { x: 660, y: 60, width: 80, height: 20 },     // Top-right horizontal
-  { x: 720, y: 60, width: 20, height: 80 },     // Top-right vertical
-  { x: 60, y: 520, width: 80, height: 20 },     // Bottom-left horizontal
-  { x: 60, y: 460, width: 20, height: 80 },     // Bottom-left vertical
-  { x: 660, y: 520, width: 80, height: 20 },    // Bottom-right horizontal
-  { x: 720, y: 460, width: 20, height: 80 },    // Bottom-right vertical
+// Desert map generation
+// Tile types: 'sandstone' (indestructible wall), 'border' (arena edge wall),
+//             'cactus' (2-hit destructible)
+let mapTiles = [];
+let nextTileId = 0;
+const BORDER_THICKNESS = 12;
 
-  // Central structures (offset from true center to allow movement)
-  { x: 320, y: 240, width: 160, height: 20 },   // Top horizontal barrier
-  { x: 320, y: 340, width: 160, height: 20 },   // Bottom horizontal barrier
+function generateDesertMap() {
+  const tiles = [];
+  nextTileId = 0;
 
-  // Vertical corridor walls (with gaps for movement)
-  { x: 250, y: 150, width: 20, height: 120 },   // Left vertical wall
-  { x: 530, y: 330, width: 20, height: 120 },   // Right vertical wall
-];
+  function overlaps(x, y, w, h, margin = 10) {
+    for (const t of tiles) {
+      if (x - margin < t.x + t.width &&
+          x + w + margin > t.x &&
+          y - margin < t.y + t.height &&
+          y + h + margin > t.y) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Border walls (arena edges — impassable)
+  tiles.push({ id: nextTileId++, type: 'border', x: 0, y: 0, width: ARENA_WIDTH, height: BORDER_THICKNESS });
+  tiles.push({ id: nextTileId++, type: 'border', x: 0, y: ARENA_HEIGHT - BORDER_THICKNESS, width: ARENA_WIDTH, height: BORDER_THICKNESS });
+  tiles.push({ id: nextTileId++, type: 'border', x: 0, y: 0, width: BORDER_THICKNESS, height: ARENA_HEIGHT });
+  tiles.push({ id: nextTileId++, type: 'border', x: ARENA_WIDTH - BORDER_THICKNESS, y: 0, width: BORDER_THICKNESS, height: ARENA_HEIGHT });
+
+  // Interior walls — a few solid cover blocks (clear of center spawn area)
+  const interiorWalls = [
+    // Upper-center horizontal barrier
+    { x: 340, y: 190, width: 110, height: 16 },
+    // Lower-center horizontal barrier
+    { x: 340, y: 400, width: 110, height: 16 },
+    // Left-side cover
+    { x: 150, y: 200, width: 60, height: 16 },
+    // Right-side cover
+    { x: 590, y: 380, width: 60, height: 16 },
+    // Left corridor
+    { x: 230, y: 340, width: 16, height: 70 },
+    // Right corridor
+    { x: 550, y: 190, width: 16, height: 70 },
+  ];
+  for (const w of interiorWalls) {
+    tiles.push({ id: nextTileId++, type: 'sandstone', ...w });
+  }
+
+  // 1-2 random extra walls for variety
+  const extraWallCount = 1 + Math.floor(Math.random() * 2);
+  for (let i = 0; i < extraWallCount; i++) {
+    const isHorizontal = Math.random() > 0.5;
+    const w = isHorizontal ? (40 + Math.floor(Math.random() * 50)) : 16;
+    const h = isHorizontal ? 16 : (40 + Math.floor(Math.random() * 50));
+    let attempts = 0;
+    while (attempts < 30) {
+      const x = 80 + Math.floor(Math.random() * (ARENA_WIDTH - 160 - w));
+      const y = 80 + Math.floor(Math.random() * (ARENA_HEIGHT - 160 - h));
+      if (!overlaps(x, y, w, h, 50)) {
+        tiles.push({ id: nextTileId++, type: 'sandstone', x, y, width: w, height: h });
+        break;
+      }
+      attempts++;
+    }
+  }
+
+  // Random cacti (3-5)
+  const cactusCount = 3 + Math.floor(Math.random() * 3);
+  for (let i = 0; i < cactusCount; i++) {
+    const size = 20 + Math.floor(Math.random() * 10);
+    let attempts = 0;
+    while (attempts < 30) {
+      const x = 60 + Math.floor(Math.random() * (ARENA_WIDTH - 120));
+      const y = 60 + Math.floor(Math.random() * (ARENA_HEIGHT - 120));
+      if (!overlaps(x - size / 2, y - size / 2, size, size, 30)) {
+        tiles.push({
+          id: nextTileId++, type: 'cactus',
+          x: x - size / 2, y: y - size / 2,
+          width: size, height: size,
+          cx: x, cy: y, radius: size / 2,
+          health: 2, maxHealth: 2
+        });
+        break;
+      }
+      attempts++;
+    }
+  }
+
+  return tiles;
+}
+
+// Generate initial map
+mapTiles = generateDesertMap();
+
+// Get only the solid (blocking) tiles for collision checks
+function getSolidTiles() {
+  return mapTiles.filter(t =>
+    t.type === 'sandstone' || t.type === 'border' || (t.type === 'cactus' && t.health > 0)
+  );
+}
 
 // Available colors for players
 const COLORS = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#F7DC6F'];
@@ -55,14 +135,50 @@ const powerups = new Map();
 let nextPowerupId = 0;
 let powerupSpawnTimer = null;
 let gameStartTime = null;
-const GAME_DURATION = 5 * 60 * 1000; // 5 minutes
+const GAME_DURATION = 300 * 1000; // 300 seconds (5 minutes)
 let gameEnded = false;
+const eliminatedNames = new Set(); // names banned until next round
+let roundResetting = false; // blocks `join` while server resets between rounds
 
 // Power-up specific state
 const mines = new Map();
 let nextMineId = 0;
 const heatseekers = new Map();
 let nextHeatseekerId = 0;
+
+// Basic anti-cheat: validate client-reported cactus hits using the last fired shot direction.
+// (Client still reports the exact hit point, but we only accept hits close to the latest shot path.)
+const lastShotByPlayer = new Map(); // socket.id -> {x, y, dirX, dirY, time}
+const lastCactusHitByPlayer = new Map(); // socket.id -> timestamp
+const CACTUS_HIT_COOLDOWN_MS = 200;
+
+function validateCactusHit(playerId, x, y) {
+  const shot = lastShotByPlayer.get(playerId);
+  if (!shot) return false;
+
+  const now = Date.now();
+  if (now - shot.time > 1000) return false; // hit must be close to last shot time
+
+  // Vector from shot origin to reported hit
+  const px = x - shot.x;
+  const py = y - shot.y;
+  const dot = px * shot.dirX + py * shot.dirY; // in front of the bullet?
+  if (dot < -5) return false;
+
+  // Perpendicular distance from bullet ray to point
+  const perp = Math.abs(px * shot.dirY - py * shot.dirX);
+  if (perp > 12) return false;
+
+  // Rough distance cap (avoid totally random far hits)
+  const dist = Math.hypot(px, py);
+  if (dist > 650) return false;
+
+  // Rate limit accepted cactus hits
+  const lastHitAt = lastCactusHitByPlayer.get(playerId) || 0;
+  if (now - lastHitAt < CACTUS_HIT_COOLDOWN_MS) return false;
+
+  return true;
+}
 
 // Monster Tank state
 let monsterTank = null; // {x, y, angle, health, maxHealth, lastShot}
@@ -74,22 +190,135 @@ const MONSTER_SHOOT_INTERVAL = 1500; // shoots every 1.5s
 let monsterBullets = [];
 let nextMonsterBulletId = 0;
 
+// Damage model (percent of 100 HP)
+const PLAYER_MAX_HEALTH = 100;
+const DAMAGE_PLAYER_BULLET = 20;   // 20%
+const DAMAGE_MONSTER_BULLET = 25;  // 25%
+const DAMAGE_HEATSEEKER = 50;      // 50%
+const DAMAGE_MINE = 50;            // 50% (not specified; kept strong)
+
 // Helper function to check spawn immunity
 function hasSpawnImmunity(player) {
   return player.spawnTime && (Date.now() - player.spawnTime < 3000);
 }
 
-// Helper functions
+function getLivesRemaining(player) {
+  return Math.max(0, (player.maxLives || 0) - (player.respawnsUsed || 0));
+}
+
+function applyDamageToPlayer(playerId, player, amount, killerId, killerKills = 0) {
+  // Check spawn immunity
+  if (hasSpawnImmunity(player)) return { applied: false, killed: false };
+
+  // Shield blocks ALL damage
+  const hasShield =
+    player.activePowerups &&
+    player.activePowerups.shield &&
+    Date.now() < player.activePowerups.shield;
+  if (hasShield) {
+    io.emit('shieldBlocked', { playerId, shooterId: killerId });
+    return { applied: false, killed: false };
+  }
+
+  player.health = Math.max(0, (player.health ?? PLAYER_MAX_HEALTH) - amount);
+
+  // Keep player.lives as "lives remaining" for HUD compatibility
+  player.lives = getLivesRemaining(player);
+
+  io.emit('playerHit', {
+    playerId,
+    health: player.health,
+    maxHealth: player.maxHealth || PLAYER_MAX_HEALTH,
+    lives: player.lives,
+    killerId,
+    kills: killerKills
+  });
+
+  if (player.health > 0) return { applied: true, killed: false };
+
+  // Death (consume one life)
+  player.isDead = true;
+  player.respawnsUsed = (player.respawnsUsed || 0) + 1;
+  player.lives = getLivesRemaining(player);
+
+  io.emit('playerDied', {
+    playerId,
+    killerId,
+    kills: killerKills
+  });
+
+  if (player.respawnsUsed < player.maxLives) {
+    const timerId = setTimeout(() => {
+      const p = players.get(playerId);
+      if (p && p.isDead) {
+        const spawnPos = getRandomSpawnPosition();
+        p.x = spawnPos.x;
+        p.y = spawnPos.y;
+        p.angle = 0;
+        p.health = PLAYER_MAX_HEALTH;
+        p.maxHealth = PLAYER_MAX_HEALTH;
+        p.isDead = false;
+        p.spawnTime = Date.now();
+        p.lives = getLivesRemaining(p);
+
+        io.emit('playerRespawned', {
+          playerId: p.id,
+          x: p.x,
+          y: p.y,
+          angle: p.angle,
+          health: p.health,
+          maxHealth: p.maxHealth,
+          lives: p.lives,
+          respawnsUsed: p.respawnsUsed,
+          spawnTime: p.spawnTime
+        });
+      }
+      respawnTimers.delete(playerId);
+    }, 3000);
+
+    respawnTimers.set(playerId, timerId);
+  } else {
+    player.isEliminated = true;
+    eliminatedNames.add(player.name.toLowerCase());
+    io.emit('playerEliminated', {
+      playerId,
+      killerId
+    });
+    checkAllEliminated();
+  }
+
+  return { applied: true, killed: true };
+}
+
+// Helper functions — collision only against solid tiles (sandstone + alive cacti)
 function isPositionInsideObstacle(x, y, radius = TANK_SIZE / 2) {
-  for (const obstacle of OBSTACLES) {
-    if (x + radius > obstacle.x &&
-        x - radius < obstacle.x + obstacle.width &&
-        y + radius > obstacle.y &&
-        y - radius < obstacle.y + obstacle.height) {
+  for (const tile of getSolidTiles()) {
+    if (x + radius > tile.x &&
+        x - radius < tile.x + tile.width &&
+        y + radius > tile.y &&
+        y - radius < tile.y + tile.height) {
       return true;
     }
   }
   return false;
+}
+
+
+// Damage a cactus tile at position; returns the hit tile or null
+function damageCactusAt(x, y) {
+  for (const tile of mapTiles) {
+    if (tile.type !== 'cactus' || tile.health <= 0) continue;
+    if (x >= tile.x && x <= tile.x + tile.width &&
+        y >= tile.y && y <= tile.y + tile.height) {
+      tile.health -= 1;
+      io.emit('tileUpdated', { id: tile.id, health: tile.health });
+      if (tile.health <= 0) {
+        io.emit('tileDestroyed', tile.id);
+      }
+      return tile;
+    }
+  }
+  return null;
 }
 
 function getRandomSpawnPosition() {
@@ -172,17 +401,32 @@ function schedulePowerupSpawn() {
 }
 
 // Monster Tank functions
-function spawnMonster() {
-  if (monsterTank !== null) return; // Already exists
+function findClearPosition() {
+  const candidates = [
+    { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 },
+    { x: 150, y: 300 },
+    { x: 650, y: 300 },
+    { x: 400, y: 100 },
+    { x: 400, y: 500 },
+  ];
+  for (const pos of candidates) {
+    if (!isPositionInsideObstacle(pos.x, pos.y, MONSTER_SIZE / 2)) return pos;
+  }
+  return candidates[0];
+}
 
-  // Spawn at center of map
+function spawnMonster() {
+  if (monsterTank !== null) return;
+
+  const pos = findClearPosition();
   monsterTank = {
-    x: ARENA_WIDTH / 2,
-    y: ARENA_HEIGHT / 2,
+    x: pos.x,
+    y: pos.y,
     angle: 0,
     health: MONSTER_MAX_HEALTH,
     maxHealth: MONSTER_MAX_HEALTH,
-    lastShot: Date.now()
+    lastShot: Date.now(),
+    stuckCount: 0
   };
 
   // Broadcast to all clients
@@ -199,9 +443,10 @@ function spawnMonster() {
 function updateMonsterTankAI() {
   if (!monsterTank) return;
 
-  // Find nearest alive player
+  // Target the nearest living player
   let nearestPlayer = null;
-  let nearestDistance = Infinity;
+  let bestDistance = Infinity;
+  let nearestPlayerId = null;
 
   for (const [playerId, player] of players.entries()) {
     if (player.isDead || player.isEliminated) continue;
@@ -210,20 +455,19 @@ function updateMonsterTankAI() {
     const dy = player.y - monsterTank.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
 
-    if (distance < nearestDistance) {
-      nearestDistance = distance;
+    if (distance < bestDistance) {
+      bestDistance = distance;
       nearestPlayer = player;
+      nearestPlayerId = playerId;
     }
   }
 
   if (nearestPlayer) {
-    // Rotate toward nearest player
     const targetAngle = Math.atan2(nearestPlayer.y - monsterTank.y, nearestPlayer.x - monsterTank.x);
     let angleDiff = targetAngle - monsterTank.angle;
     while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
     while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
 
-    // Turn slowly
     const turnRate = 0.05;
     if (Math.abs(angleDiff) > turnRate) {
       monsterTank.angle += Math.sign(angleDiff) * turnRate;
@@ -231,20 +475,37 @@ function updateMonsterTankAI() {
       monsterTank.angle = targetAngle;
     }
 
-    // Move toward player
-    const oldX = monsterTank.x;
-    const oldY = monsterTank.y;
-    monsterTank.x += Math.cos(monsterTank.angle) * MONSTER_SPEED;
-    monsterTank.y += Math.sin(monsterTank.angle) * MONSTER_SPEED;
+    // Movement with wall-sliding: try full move, then X-only, then Y-only
+    const moveR = MONSTER_SIZE / 2 - 2; // slightly smaller for movement checks
+    const wantDX = Math.cos(targetAngle) * MONSTER_SPEED;
+    const wantDY = Math.sin(targetAngle) * MONSTER_SPEED;
 
-    // Avoid obstacles and boundaries
-    if (isPositionInsideObstacle(monsterTank.x, monsterTank.y, MONSTER_SIZE / 2) ||
-        monsterTank.x < MONSTER_SIZE / 2 || monsterTank.x > ARENA_WIDTH - MONSTER_SIZE / 2 ||
-        monsterTank.y < MONSTER_SIZE / 2 || monsterTank.y > ARENA_HEIGHT - MONSTER_SIZE / 2) {
-      // Revert position and try different angle
-      monsterTank.x = oldX;
-      monsterTank.y = oldY;
-      monsterTank.angle += Math.PI / 4; // Turn 45 degrees
+    const canGo = (x, y) =>
+      !isPositionInsideObstacle(x, y, moveR) &&
+      x > moveR + BORDER_THICKNESS && x < ARENA_WIDTH - moveR - BORDER_THICKNESS &&
+      y > moveR + BORDER_THICKNESS && y < ARENA_HEIGHT - moveR - BORDER_THICKNESS;
+
+    let nx = monsterTank.x + wantDX;
+    let ny = monsterTank.y + wantDY;
+
+    if (canGo(nx, ny)) {
+      monsterTank.x = nx;
+      monsterTank.y = ny;
+      monsterTank.stuckCount = 0;
+    } else if (canGo(monsterTank.x + wantDX, monsterTank.y)) {
+      monsterTank.x += wantDX;
+      monsterTank.stuckCount = 0;
+    } else if (canGo(monsterTank.x, monsterTank.y + wantDY)) {
+      monsterTank.y += wantDY;
+      monsterTank.stuckCount = 0;
+    } else {
+      monsterTank.stuckCount = (monsterTank.stuckCount || 0) + 1;
+      if (monsterTank.stuckCount > 60) {
+        const safePos = findClearPosition();
+        monsterTank.x = safePos.x;
+        monsterTank.y = safePos.y;
+        monsterTank.stuckCount = 0;
+      }
     }
 
     // Check for mine collision with monster
@@ -287,6 +548,7 @@ function updateMonsterTankAI() {
     }
 
     // Shoot at player
+    if (!monsterTank) return;
     const now = Date.now();
     if (now - monsterTank.lastShot > MONSTER_SHOOT_INTERVAL) {
       monsterTank.lastShot = now;
@@ -322,6 +584,8 @@ function updateMonsterTankAI() {
 function updateMonsterBullets() {
   for (let i = monsterBullets.length - 1; i >= 0; i--) {
     const bullet = monsterBullets[i];
+    const prevX = bullet.x;
+    const prevY = bullet.y;
     bullet.x += bullet.velocityX;
     bullet.y += bullet.velocityY;
 
@@ -331,8 +595,20 @@ function updateMonsterBullets() {
       continue;
     }
 
-    // Check if hit obstacle
-    if (isPositionInsideObstacle(bullet.x, bullet.y, 4)) {
+    // Check if hit obstacle — swept to avoid tunneling through thin walls
+    const steps = Math.max(1, Math.ceil(Math.hypot(bullet.x - prevX, bullet.y - prevY) / 4));
+    let hitObstacle = false;
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      const sx = prevX + (bullet.x - prevX) * t;
+      const sy = prevY + (bullet.y - prevY) * t;
+      if (isPositionInsideObstacle(sx, sy, 4)) {
+        damageCactusAt(sx, sy);
+        hitObstacle = true;
+        break;
+      }
+    }
+    if (hitObstacle) {
       monsterBullets.splice(i, 1);
       continue;
     }
@@ -348,71 +624,7 @@ function updateMonsterBullets() {
       if (distance < 20) {
         // Hit player!
         monsterBullets.splice(i, 1);
-
-        // Check spawn immunity
-        if (hasSpawnImmunity(player)) {
-          break;
-        }
-
-        // Check shield
-        const hasShield = player.activePowerups && player.activePowerups.shield && Date.now() < player.activePowerups.shield;
-        if (hasShield) {
-          io.emit('shieldBlocked', { playerId: playerId, shooterId: 'monster' });
-          break;
-        }
-
-        player.lives -= 1;
-
-        io.emit('playerHit', {
-          playerId: playerId,
-          lives: player.lives,
-          killerId: 'monster',
-          kills: 0
-        });
-
-        if (player.lives <= 0) {
-          player.isDead = true;
-          player.respawnsUsed += 1;
-
-          io.emit('playerDied', {
-            playerId: playerId,
-            killerId: 'monster'
-          });
-
-          if (player.respawnsUsed < player.maxLives) {
-            const timerId = setTimeout(() => {
-              const p = players.get(playerId);
-              if (p && p.isDead) {
-                const spawnPos = getRandomSpawnPosition();
-                p.x = spawnPos.x;
-                p.y = spawnPos.y;
-                p.angle = 0;
-                p.lives = 1;
-                p.isDead = false;
-                p.spawnTime = Date.now();
-
-                io.emit('playerRespawned', {
-                  playerId: p.id,
-                  x: p.x,
-                  y: p.y,
-                  angle: p.angle,
-                  lives: p.lives,
-                  respawnsUsed: p.respawnsUsed,
-                  spawnTime: p.spawnTime
-                });
-              }
-              respawnTimers.delete(playerId);
-            }, 3000);
-
-            respawnTimers.set(playerId, timerId);
-          } else {
-            player.isEliminated = true;
-            io.emit('playerEliminated', {
-              playerId: playerId,
-              killerId: 'monster'
-            });
-          }
-        }
+        applyDamageToPlayer(playerId, player, DAMAGE_MONSTER_BULLET, 'monster', 0);
         break;
       }
     }
@@ -455,22 +667,38 @@ io.on('connection', (socket) => {
 
   // Handle player join
   socket.on('join', (playerName) => {
+    const name = (playerName || `Player ${players.size + 1}`).trim();
+
     // Check max players
     if (players.size >= MAX_PLAYERS) {
       socket.emit('error', 'Game is full');
       return;
     }
 
+    // Prevent re-joining during the round reset window
+    if (roundResetting) {
+      socket.emit('error', 'Round is resetting. Please wait...');
+      return;
+    }
+
+    // Block eliminated players from re-joining this round
+    if (eliminatedNames.has(name.toLowerCase())) {
+      socket.emit('error', 'You were eliminated this round. Wait for the next round to start.');
+      return;
+    }
+
     const spawnPos = getRandomSpawnPosition();
     const player = {
       id: socket.id,
-      name: playerName || `Player ${players.size + 1}`,
+      name: name,
       x: spawnPos.x,
       y: spawnPos.y,
       angle: 0,
       color: getAvailableColor(),
-      lives: 3,
-      maxLives: 3,
+      health: PLAYER_MAX_HEALTH,
+      maxHealth: PLAYER_MAX_HEALTH,
+      lives: 5,
+      maxLives: 5,
       respawnsUsed: 0,
       kills: 0,
       isEliminated: false,
@@ -491,8 +719,8 @@ io.on('connection', (socket) => {
     // Send current player their info
     socket.emit('joined', player);
 
-    // Send obstacles to the new player
-    socket.emit('obstacles', OBSTACLES);
+    // Send desert map tiles to the new player
+    socket.emit('mapTiles', mapTiles);
 
     // Send existing power-ups to the new player
     socket.emit('powerupsState', Array.from(powerups.values()));
@@ -534,14 +762,29 @@ io.on('connection', (socket) => {
                     Date.now() < player.activePowerups.phase;
 
     // Update player position and angle
-    // If player has phase, allow out-of-bounds positions (they wrap on client)
-    if (hasPhase) {
-      if (data.x !== undefined) player.x = data.x;
-      if (data.y !== undefined) player.y = data.y;
-    } else {
-      if (data.x !== undefined) player.x = Math.max(0, Math.min(ARENA_WIDTH, data.x));
-      if (data.y !== undefined) player.y = Math.max(0, Math.min(ARENA_HEIGHT, data.y));
+    // Phase: allow wall ghosting and out-of-bounds (client wraps)
+    // Normal: clamp to arena and prevent moving through solid tiles
+    const oldX = player.x;
+    const oldY = player.y;
+
+    let nextX = player.x;
+    let nextY = player.y;
+
+    if (data.x !== undefined) nextX = data.x;
+    if (data.y !== undefined) nextY = data.y;
+
+    if (!hasPhase) {
+      nextX = Math.max(0, Math.min(ARENA_WIDTH, nextX));
+      nextY = Math.max(0, Math.min(ARENA_HEIGHT, nextY));
+
+      if (isPositionInsideObstacle(nextX, nextY, TANK_SIZE / 2)) {
+        nextX = oldX;
+        nextY = oldY;
+      }
     }
+
+    player.x = nextX;
+    player.y = nextY;
     if (data.angle !== undefined) player.angle = data.angle;
 
     // Check for mine collision (all mines except own)
@@ -560,11 +803,18 @@ io.on('connection', (socket) => {
           // Mine triggered!
           mines.delete(mineId);
 
-          // Apply damage to player
-          player.lives -= 1;
+          // Apply damage to player (shield blocks all damage) + increment kills for every successful hit
           const mineOwner = players.get(mine.playerId);
-          if (mineOwner) {
-            mineOwner.kills += 1;
+          const nextKills = mineOwner ? mineOwner.kills + 1 : 0;
+          const dmgRes = applyDamageToPlayer(
+            player.id,
+            player,
+            DAMAGE_MINE,
+            mine.playerId,
+            nextKills
+          );
+          if (mineOwner && dmgRes.applied) {
+            mineOwner.kills = nextKills;
           }
 
           io.emit('mineExploded', {
@@ -574,57 +824,7 @@ io.on('connection', (socket) => {
             y: mine.y
           });
 
-          io.emit('playerHit', {
-            playerId: player.id,
-            lives: player.lives,
-            killerId: mine.playerId,
-            kills: mineOwner ? mineOwner.kills : 0
-          });
-
-          if (player.lives <= 0) {
-            player.isDead = true;
-            player.respawnsUsed += 1;
-
-            io.emit('playerDied', {
-              playerId: player.id,
-              killerId: mine.playerId
-            });
-
-            // Check if player has respawns remaining
-            if (player.respawnsUsed < player.maxLives) {
-              const timerId = setTimeout(() => {
-                const p = players.get(player.id);
-                if (p && p.isDead) {
-                  const spawnPos = getRandomSpawnPosition();
-                  p.x = spawnPos.x;
-                  p.y = spawnPos.y;
-                  p.angle = 0;
-                  p.lives = 1;
-                  p.isDead = false;
-                  p.spawnTime = Date.now();
-
-                  io.emit('playerRespawned', {
-                    playerId: p.id,
-                    x: p.x,
-                    y: p.y,
-                    angle: p.angle,
-                    lives: p.lives,
-                    respawnsUsed: p.respawnsUsed,
-                    spawnTime: p.spawnTime
-                  });
-                }
-                respawnTimers.delete(player.id);
-              }, 3000);
-
-              respawnTimers.set(player.id, timerId);
-            } else {
-              player.isEliminated = true;
-              io.emit('playerEliminated', {
-                playerId: player.id,
-                killerId: mine.playerId
-              });
-            }
-          }
+          // (death/respawn/elimination handled inside applyDamageToPlayer)
 
           break; // Only trigger one mine at a time
         }
@@ -649,6 +849,18 @@ io.on('connection', (socket) => {
     const shooter = players.get(socket.id);
     if (!shooter || shooter.isDead || shooter.isEliminated) return;
 
+    // Store last shot for basic hit validation (e.g., cactus hits)
+    const shotSpeed = Math.hypot(data.velocityX || 0, data.velocityY || 0);
+    if (shotSpeed > 0) {
+      lastShotByPlayer.set(socket.id, {
+        x: data.x,
+        y: data.y,
+        dirX: (data.velocityX || 0) / shotSpeed,
+        dirY: (data.velocityY || 0) / shotSpeed,
+        time: Date.now()
+      });
+    }
+
     // Broadcast bullet to all clients
     io.emit('bulletFired', {
       shooterId: socket.id,
@@ -668,81 +880,17 @@ io.on('connection', (socket) => {
           return;
         }
 
-        // Check if player has active shield
-        const hasShield = hitPlayer.activePowerups &&
-                         hitPlayer.activePowerups.shield &&
-                         Date.now() < hitPlayer.activePowerups.shield;
-
-        if (hasShield) {
-          // Shield blocks the hit - emit shield blocked event
-          io.emit('shieldBlocked', {
-            playerId: hitPlayer.id,
-            shooterId: shooter.id
-          });
-          console.log(`Shield blocked hit on player ${hitPlayer.name}`);
-          return; // Don't process the hit
-        }
-
-        hitPlayer.lives -= 1;
-        shooter.kills += 1;
-
-        io.emit('playerHit', {
-          playerId: hitPlayer.id,
-          lives: hitPlayer.lives,
-          killerId: shooter.id,
-          kills: shooter.kills
-        });
-
-        if (hitPlayer.lives <= 0) {
-          hitPlayer.isDead = true;
-          hitPlayer.respawnsUsed += 1;
-
-          io.emit('playerDied', {
-            playerId: hitPlayer.id,
-            killerId: shooter.id
-          });
-
-          // Check if player has respawns remaining (3 lives = 3 deaths before elimination)
-          if (hitPlayer.respawnsUsed < hitPlayer.maxLives) {
-            // Start 3-second respawn timer
-            const timerId = setTimeout(() => {
-              const player = players.get(hitPlayer.id);
-              if (player && player.isDead) {
-                // Respawn player at random position
-                const spawnPos = getRandomSpawnPosition();
-                player.x = spawnPos.x;
-                player.y = spawnPos.y;
-                player.angle = 0;
-                player.lives = 1;
-                player.isDead = false;
-                player.spawnTime = Date.now();
-
-                io.emit('playerRespawned', {
-                  playerId: player.id,
-                  x: player.x,
-                  y: player.y,
-                  angle: player.angle,
-                  lives: player.lives,
-                  respawnsUsed: player.respawnsUsed,
-                  spawnTime: player.spawnTime
-                });
-
-                console.log(`Player ${player.name} respawned (${player.respawnsUsed}/${player.maxLives} deaths)`);
-              }
-              respawnTimers.delete(hitPlayer.id);
-            }, 3000);
-
-            respawnTimers.set(hitPlayer.id, timerId);
-            console.log(`Player ${hitPlayer.name} will respawn in 3 seconds (${hitPlayer.respawnsUsed}/${hitPlayer.maxLives} deaths)`);
-          } else {
-            // Player is eliminated
-            hitPlayer.isEliminated = true;
-            io.emit('playerEliminated', {
-              playerId: hitPlayer.id,
-              killerId: shooter.id
-            });
-            console.log(`Player ${hitPlayer.name} eliminated`);
-          }
+        // Apply damage (shield blocks all damage) + increment kills for every successful hit
+        const nextKills = shooter.kills + 1;
+        const dmgRes = applyDamageToPlayer(
+          hitPlayer.id,
+          hitPlayer,
+          DAMAGE_PLAYER_BULLET,
+          shooter.id,
+          nextKills
+        );
+        if (dmgRes.applied) {
+          shooter.kills = nextKills;
         }
       }
     }
@@ -827,6 +975,19 @@ io.on('connection', (socket) => {
         console.log(`Mine ${mine.id} expired`);
       }
     }, 10000);
+  });
+
+  // Handle bullet hitting a cactus (reported by client)
+  socket.on('hitCactus', (data) => {
+    if (gameEnded) return;
+  const x = data && typeof data.x === 'number' ? data.x : null;
+  const y = data && typeof data.y === 'number' ? data.y : null;
+  if (x === null || y === null) return;
+
+  // Accept cactus hits only if they match the latest shot direction (and pass cooldown).
+  if (!validateCactusHit(socket.id, x, y)) return;
+  lastCactusHitByPlayer.set(socket.id, Date.now());
+  damageCactusAt(x, y);
   });
 
   // Handle heat seeking missile
@@ -923,7 +1084,6 @@ io.on('connection', (socket) => {
     if (player) {
       console.log(`Player ${player.name} disconnected`);
 
-      // Clear any pending respawn timer
       if (respawnTimers.has(socket.id)) {
         clearTimeout(respawnTimers.get(socket.id));
         respawnTimers.delete(socket.id);
@@ -931,6 +1091,7 @@ io.on('connection', (socket) => {
 
       players.delete(socket.id);
       io.emit('playerLeft', socket.id);
+      checkAllEliminated();
     }
   });
 
@@ -940,7 +1101,6 @@ io.on('connection', (socket) => {
     if (player) {
       console.log(`Player ${player.name} left the game`);
 
-      // Clear any pending respawn timer
       if (respawnTimers.has(socket.id)) {
         clearTimeout(respawnTimers.get(socket.id));
         respawnTimers.delete(socket.id);
@@ -948,37 +1108,83 @@ io.on('connection', (socket) => {
 
       players.delete(socket.id);
       io.emit('playerLeft', socket.id);
+      checkAllEliminated();
     }
   });
 });
+
+// End the current round: show rankings, reset state, let players rejoin
+function endRound() {
+  if (gameEnded) return;
+
+  const playerArray = Array.from(players.values());
+  const rankings = playerArray
+    .sort((a, b) => b.kills - a.kills)
+    .slice(0, 3)
+    .map((player, index) => ({
+      rank: index + 1,
+      name: player.name,
+      kills: player.kills
+    }));
+
+  gameEnded = true;
+  roundResetting = true;
+  io.emit('gameOver', rankings);
+  console.log('Game over! Rankings:', rankings);
+
+  // Reset for next round
+  gameStartTime = null;
+  eliminatedNames.clear();
+
+  for (const [id, p] of players.entries()) {
+    const s = io.sockets.sockets.get(id);
+    if (s) s.emit('roundOver');
+  }
+  players.clear();
+  respawnTimers.forEach(t => clearTimeout(t));
+  respawnTimers.clear();
+  mines.clear();
+  heatseekers.clear();
+  monsterTank = null;
+  monsterBullets = [];
+  powerups.clear();
+  mapTiles = generateDesertMap();
+
+  lastShotByPlayer.clear();
+  lastCactusHitByPlayer.clear();
+
+  // Allow new round joins after the client finishes its 8s round-over UI delay
+  setTimeout(() => {
+    roundResetting = false;
+  }, 8000);
+}
+
+// Check if all players are eliminated or gone — if so, end round early
+function checkAllEliminated() {
+  if (!gameStartTime || gameEnded) return;
+
+  if (players.size === 0) {
+    console.log('No players remaining — ending round');
+    endRound();
+    return;
+  }
+
+  const anyAlive = Array.from(players.values()).some(p => !p.isEliminated);
+  if (!anyAlive) {
+    console.log('All players eliminated — ending round early');
+    endRound();
+  }
+}
 
 // Broadcast game state at 10fps (playerMoved handles real-time sync)
 setInterval(() => {
   if (players.size > 0) {
     io.emit('gameState', Array.from(players.values()));
 
-    // Check if game should end
+    // Check if game should end (timer expired)
     if (gameStartTime && Date.now() - gameStartTime >= GAME_DURATION) {
-      // Sort players by kills descending
-      const playerArray = Array.from(players.values());
-      const rankings = playerArray
-        .sort((a, b) => b.kills - a.kills)
-        .slice(0, 3) // Top 3
-        .map((player, index) => ({
-          rank: index + 1,
-          name: player.name,
-          kills: player.kills
-        }));
-
-      // Emit game over with rankings
-      gameEnded = true;
-      io.emit('gameOver', rankings);
-      console.log('Game over! Rankings:', rankings);
-
-      // Reset game timer
-      gameStartTime = null;
+      endRound();
     } else if (gameStartTime) {
-      // Emit remaining time
       const remaining = GAME_DURATION - (Date.now() - gameStartTime);
       io.emit('gameTimer', remaining);
     }
@@ -1129,79 +1335,20 @@ setInterval(() => {
         }
 
         // Check if player has active shield
-        const hasShield = nearestEnemy.activePowerups &&
-                         nearestEnemy.activePowerups.shield &&
-                         Date.now() < nearestEnemy.activePowerups.shield;
-
-        if (hasShield) {
-          io.emit('shieldBlocked', {
-            playerId: nearestEnemy.id,
-            shooterId: heatseeker.shooterId
-          });
-          io.emit('heatseekerExpired', id);
-          continue;
-        }
-
-        nearestEnemy.lives -= 1;
-        if (shooter) {
-          shooter.kills += 1;
-        }
-
         io.emit('heatseekerHit', {
           heatseekerId: id,
           playerId: nearestEnemy.id
         });
-
-        io.emit('playerHit', {
-          playerId: nearestEnemy.id,
-          lives: nearestEnemy.lives,
-          killerId: heatseeker.shooterId,
-          kills: shooter ? shooter.kills : 0
-        });
-
-        if (nearestEnemy.lives <= 0) {
-          nearestEnemy.isDead = true;
-          nearestEnemy.respawnsUsed += 1;
-
-          io.emit('playerDied', {
-            playerId: nearestEnemy.id,
-            killerId: heatseeker.shooterId
-          });
-
-          // Check if player has respawns remaining
-          if (nearestEnemy.respawnsUsed < nearestEnemy.maxLives) {
-            const timerId = setTimeout(() => {
-              const player = players.get(nearestEnemy.id);
-              if (player && player.isDead) {
-                const spawnPos = getRandomSpawnPosition();
-                player.x = spawnPos.x;
-                player.y = spawnPos.y;
-                player.angle = 0;
-                player.lives = 1;
-                player.isDead = false;
-                player.spawnTime = Date.now();
-
-                io.emit('playerRespawned', {
-                  playerId: player.id,
-                  x: player.x,
-                  y: player.y,
-                  angle: player.angle,
-                  lives: player.lives,
-                  respawnsUsed: player.respawnsUsed,
-                  spawnTime: player.spawnTime
-                });
-              }
-              respawnTimers.delete(nearestEnemy.id);
-            }, 3000);
-
-            respawnTimers.set(nearestEnemy.id, timerId);
-          } else {
-            nearestEnemy.isEliminated = true;
-            io.emit('playerEliminated', {
-              playerId: nearestEnemy.id,
-              killerId: heatseeker.shooterId
-            });
-          }
+        const nextKills = shooter ? shooter.kills + 1 : 0;
+        const dmgRes = applyDamageToPlayer(
+          nearestEnemy.id,
+          nearestEnemy,
+          DAMAGE_HEATSEEKER,
+          heatseeker.shooterId,
+          nextKills
+        );
+        if (shooter && dmgRes.applied) {
+          shooter.kills = nextKills;
         }
 
         continue;
@@ -1222,13 +1369,12 @@ setInterval(() => {
 // Start power-up spawn system
 schedulePowerupSpawn();
 
-// Schedule monster tank spawns every 2 minutes
-setInterval(() => {
-  spawnMonster();
-}, MONSTER_SPAWN_INTERVAL);
-
-// Spawn first monster after 2 minutes
+// Spawn first monster after 30 seconds, then respawn every 2 minutes
 setTimeout(() => {
+  spawnMonster();
+}, 30000);
+
+setInterval(() => {
   spawnMonster();
 }, MONSTER_SPAWN_INTERVAL);
 
@@ -1240,3 +1386,4 @@ httpServer.listen(PORT, () => {
   console.log(`Max players: ${MAX_PLAYERS}`);
   console.log('Power-up spawn system initialized');
 });
+

@@ -5,9 +5,14 @@
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
-    "dev": "node server/index.js"
+    "dev": "npx nodemon server/index.js"
   },
-  "keywords": ["game", "multiplayer", "tank", "socketio"],
+  "keywords": [
+    "game",
+    "multiplayer",
+    "tank",
+    "socketio"
+  ],
   "author": "",
   "license": "MIT",
   "engines": {
@@ -16,5 +21,8 @@
   "dependencies": {
     "express": "^4.18.2",
     "socket.io": "^4.6.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
   }
 }
