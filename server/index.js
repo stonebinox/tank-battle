@@ -138,12 +138,47 @@ let gameStartTime = null;
 const GAME_DURATION = 300 * 1000; // 300 seconds (5 minutes)
 let gameEnded = false;
 const eliminatedNames = new Set(); // names banned until next round
+let roundResetting = false; // blocks `join` while server resets between rounds
 
 // Power-up specific state
 const mines = new Map();
 let nextMineId = 0;
 const heatseekers = new Map();
 let nextHeatseekerId = 0;
+
+// Basic anti-cheat: validate client-reported cactus hits using the last fired shot direction.
+// (Client still reports the exact hit point, but we only accept hits close to the latest shot path.)
+const lastShotByPlayer = new Map(); // socket.id -> {x, y, dirX, dirY, time}
+const lastCactusHitByPlayer = new Map(); // socket.id -> timestamp
+const CACTUS_HIT_COOLDOWN_MS = 200;
+
+function validateCactusHit(playerId, x, y) {
+  const shot = lastShotByPlayer.get(playerId);
+  if (!shot) return false;
+
+  const now = Date.now();
+  if (now - shot.time > 1000) return false; // hit must be close to last shot time
+
+  // Vector from shot origin to reported hit
+  const px = x - shot.x;
+  const py = y - shot.y;
+  const dot = px * shot.dirX + py * shot.dirY; // in front of the bullet?
+  if (dot < -5) return false;
+
+  // Perpendicular distance from bullet ray to point
+  const perp = Math.abs(px * shot.dirY - py * shot.dirX);
+  if (perp > 12) return false;
+
+  // Rough distance cap (avoid totally random far hits)
+  const dist = Math.hypot(px, py);
+  if (dist > 650) return false;
+
+  // Rate limit accepted cactus hits
+  const lastHitAt = lastCactusHitByPlayer.get(playerId) || 0;
+  if (now - lastHitAt < CACTUS_HIT_COOLDOWN_MS) return false;
+
+  return true;
+}
 
 // Monster Tank state
 let monsterTank = null; // {x, y, angle, health, maxHealth, lastShot}
@@ -640,6 +675,12 @@ io.on('connection', (socket) => {
       return;
     }
 
+    // Prevent re-joining during the round reset window
+    if (roundResetting) {
+      socket.emit('error', 'Round is resetting. Please wait...');
+      return;
+    }
+
     // Block eliminated players from re-joining this round
     if (eliminatedNames.has(name.toLowerCase())) {
       socket.emit('error', 'You were eliminated this round. Wait for the next round to start.');
@@ -762,12 +803,18 @@ io.on('connection', (socket) => {
           // Mine triggered!
           mines.delete(mineId);
 
-          // Apply damage to player (shield blocks all damage)
+          // Apply damage to player (shield blocks all damage) + increment kills for every successful hit
           const mineOwner = players.get(mine.playerId);
-          const mineOwnerKills = mineOwner ? mineOwner.kills : 0;
-          const dmgRes = applyDamageToPlayer(player.id, player, DAMAGE_MINE, mine.playerId, mineOwnerKills);
-          if (mineOwner && dmgRes.killed) {
-            mineOwner.kills += 1;
+          const nextKills = mineOwner ? mineOwner.kills + 1 : 0;
+          const dmgRes = applyDamageToPlayer(
+            player.id,
+            player,
+            DAMAGE_MINE,
+            mine.playerId,
+            nextKills
+          );
+          if (mineOwner && dmgRes.applied) {
+            mineOwner.kills = nextKills;
           }
 
           io.emit('mineExploded', {
@@ -802,6 +849,18 @@ io.on('connection', (socket) => {
     const shooter = players.get(socket.id);
     if (!shooter || shooter.isDead || shooter.isEliminated) return;
 
+    // Store last shot for basic hit validation (e.g., cactus hits)
+    const shotSpeed = Math.hypot(data.velocityX || 0, data.velocityY || 0);
+    if (shotSpeed > 0) {
+      lastShotByPlayer.set(socket.id, {
+        x: data.x,
+        y: data.y,
+        dirX: (data.velocityX || 0) / shotSpeed,
+        dirY: (data.velocityY || 0) / shotSpeed,
+        time: Date.now()
+      });
+    }
+
     // Broadcast bullet to all clients
     io.emit('bulletFired', {
       shooterId: socket.id,
@@ -821,10 +880,17 @@ io.on('connection', (socket) => {
           return;
         }
 
-        // Apply damage (shield blocks all damage)
-        const dmgRes = applyDamageToPlayer(hitPlayer.id, hitPlayer, DAMAGE_PLAYER_BULLET, shooter.id, shooter.kills);
-        if (dmgRes.killed) {
-          shooter.kills += 1;
+        // Apply damage (shield blocks all damage) + increment kills for every successful hit
+        const nextKills = shooter.kills + 1;
+        const dmgRes = applyDamageToPlayer(
+          hitPlayer.id,
+          hitPlayer,
+          DAMAGE_PLAYER_BULLET,
+          shooter.id,
+          nextKills
+        );
+        if (dmgRes.applied) {
+          shooter.kills = nextKills;
         }
       }
     }
@@ -914,7 +980,14 @@ io.on('connection', (socket) => {
   // Handle bullet hitting a cactus (reported by client)
   socket.on('hitCactus', (data) => {
     if (gameEnded) return;
-    damageCactusAt(data.x, data.y);
+  const x = data && typeof data.x === 'number' ? data.x : null;
+  const y = data && typeof data.y === 'number' ? data.y : null;
+  if (x === null || y === null) return;
+
+  // Accept cactus hits only if they match the latest shot direction (and pass cooldown).
+  if (!validateCactusHit(socket.id, x, y)) return;
+  lastCactusHitByPlayer.set(socket.id, Date.now());
+  damageCactusAt(x, y);
   });
 
   // Handle heat seeking missile
@@ -1055,6 +1128,7 @@ function endRound() {
     }));
 
   gameEnded = true;
+  roundResetting = true;
   io.emit('gameOver', rankings);
   console.log('Game over! Rankings:', rankings);
 
@@ -1075,7 +1149,14 @@ function endRound() {
   monsterBullets = [];
   powerups.clear();
   mapTiles = generateDesertMap();
-  gameEnded = false;
+
+  lastShotByPlayer.clear();
+  lastCactusHitByPlayer.clear();
+
+  // Allow new round joins after the client finishes its 8s round-over UI delay
+  setTimeout(() => {
+    roundResetting = false;
+  }, 8000);
 }
 
 // Check if all players are eliminated or gone — if so, end round early
@@ -1258,10 +1339,16 @@ setInterval(() => {
           heatseekerId: id,
           playerId: nearestEnemy.id
         });
-        const shooterKills = shooter ? shooter.kills : 0;
-        const dmgRes = applyDamageToPlayer(nearestEnemy.id, nearestEnemy, DAMAGE_HEATSEEKER, heatseeker.shooterId, shooterKills);
-        if (shooter && dmgRes.killed) {
-          shooter.kills += 1;
+        const nextKills = shooter ? shooter.kills + 1 : 0;
+        const dmgRes = applyDamageToPlayer(
+          nearestEnemy.id,
+          nearestEnemy,
+          DAMAGE_HEATSEEKER,
+          heatseeker.shooterId,
+          nextKills
+        );
+        if (shooter && dmgRes.applied) {
+          shooter.kills = nextKills;
         }
 
         continue;

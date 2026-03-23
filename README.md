@@ -43,7 +43,6 @@ Battle against other players in a tactical desert arena filled with sandstone wa
 - A large AI-controlled boss tank that spawns during the match
 - Targets and chases the **nearest living player**
 - Fires bullets at players and deals heavy damage
-- Deals **contact (ram) damage** at close range
 - Can be destroyed by players for bonus points and power-up drops
 - Spawns **~30 seconds** after the first server start, then respawns every **2 minutes** if destroyed
 
