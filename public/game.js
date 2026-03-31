@@ -165,6 +165,8 @@ const ARENA_WIDTH = 800;
 const ARENA_HEIGHT = 600;
 const TANK_WIDTH = 30;
 const TANK_HEIGHT = 20;
+// Hit/collision radius for movement vs tiles — must match server TANK_SIZE (see server/index.js)
+const TANK_SIZE = 40;
 const TANK_SPEED = 3;
 const BULLET_SPEED = 8;
 const BULLET_RADIUS = 4;
@@ -511,6 +513,12 @@ socket.on('playerMoved', (data) => {
         players[data.id].y = data.y;
         players[data.id].angle = data.angle;
     }
+    // Keep local movement/shooting state in sync with server (same as players[id] used for drawing)
+    if (localPlayer.id && data.id === localPlayer.id) {
+        localPlayer.x = data.x;
+        localPlayer.y = data.y;
+        localPlayer.angle = data.angle;
+    }
 });
 
 // Handle player left event - remove disconnected players
@@ -800,7 +808,7 @@ socket.on('roundOver', () => {
 });
 
 // Helper function to check if position collides with obstacles
-function isPositionInsideObstacle(x, y, radius = TANK_WIDTH / 2) {
+function isPositionInsideObstacle(x, y, radius = TANK_SIZE / 2) {
     for (const obstacle of obstacles) {
         if (x + radius > obstacle.x &&
             x - radius < obstacle.x + obstacle.width &&
