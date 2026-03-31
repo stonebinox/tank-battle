@@ -1041,7 +1041,7 @@ io.on('connection', (socket) => {
     console.log(`Player ${shooter.name} fired heatseeker`);
   });
 
-  // Handle shootMonster event
+  // Handle shootMonster event (follow-up to a bullet already fired via `shoot`; no extra fire-rate tick)
   socket.on('shootMonster', (data) => {
     const shooter = players.get(socket.id);
     if (!shooter || shooter.isDead || shooter.isEliminated || !monsterTank) return;
