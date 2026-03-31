@@ -501,6 +501,14 @@ socket.on('gameState', (playersArray) => {
     }
     players = playersObj;
 
+    // Authoritative snapshot: keep local movement/shooting aligned with what we draw
+    if (localPlayer.id && players[localPlayer.id]) {
+        const p = players[localPlayer.id];
+        localPlayer.x = p.x;
+        localPlayer.y = p.y;
+        localPlayer.angle = p.angle;
+    }
+
     // Update player count
     const playerCount = Object.keys(players).length;
     playerCountEl.textContent = `Players: ${playerCount}/6`;
