@@ -165,12 +165,18 @@ const ARENA_WIDTH = 800;
 const ARENA_HEIGHT = 600;
 const TANK_WIDTH = 30;
 const TANK_HEIGHT = 20;
+// Hit/collision radius for movement vs tiles — must match server TANK_SIZE (server/index.js)
+const TANK_SIZE = 40;
+// Boss body size — must match server MONSTER_SIZE (server/index.js)
+const MONSTER_SIZE = 60;
+// Server validates shootMonster within this distance (see server shootMonster handler)
+const MONSTER_DIRECT_HIT_RADIUS = 55;
 const TANK_SPEED = 3;
 const BULLET_SPEED = 8;
 const BULLET_RADIUS = 4;
 const COLLISION_DISTANCE = 20;
-const NORMAL_FIRE_RATE = 500; // 500ms between shots
-const RAPID_FIRE_RATE = 80;   // 80ms between shots for machine gun
+const NORMAL_FIRE_RATE = 1000; // 1s between normal shots
+const RAPID_FIRE_RATE = 80;    // machine gun power-up only
 
 // Local player state
 let localPlayer = {
@@ -499,6 +505,14 @@ socket.on('gameState', (playersArray) => {
     }
     players = playersObj;
 
+    // Authoritative snapshot: draw uses `players`; keep local movement/shooting aligned
+    if (localPlayer.id && players[localPlayer.id]) {
+        const p = players[localPlayer.id];
+        localPlayer.x = p.x;
+        localPlayer.y = p.y;
+        localPlayer.angle = p.angle;
+    }
+
     // Update player count
     const playerCount = Object.keys(players).length;
     playerCountEl.textContent = `Players: ${playerCount}/6`;
@@ -510,6 +524,11 @@ socket.on('playerMoved', (data) => {
         players[data.id].x = data.x;
         players[data.id].y = data.y;
         players[data.id].angle = data.angle;
+    }
+    if (localPlayer.id && data.id === localPlayer.id) {
+        localPlayer.x = data.x;
+        localPlayer.y = data.y;
+        localPlayer.angle = data.angle;
     }
 });
 
@@ -548,6 +567,11 @@ socket.on('playerHit', (data) => {
         players[data.playerId].lives = data.lives;
         if (data.health !== undefined) players[data.playerId].health = data.health;
         if (data.maxHealth !== undefined) players[data.playerId].maxHealth = data.maxHealth;
+    }
+    if (data.playerId === localPlayer.id) {
+        if (data.lives !== undefined) localPlayer.lives = data.lives;
+        if (data.health !== undefined) localPlayer.health = data.health;
+        if (data.maxHealth !== undefined) localPlayer.maxHealth = data.maxHealth;
     }
     // Update killer's score
     if (players[data.killerId]) {
@@ -800,7 +824,7 @@ socket.on('roundOver', () => {
 });
 
 // Helper function to check if position collides with obstacles
-function isPositionInsideObstacle(x, y, radius = TANK_WIDTH / 2) {
+function isPositionInsideObstacle(x, y, radius = TANK_SIZE / 2) {
     for (const obstacle of obstacles) {
         if (x + radius > obstacle.x &&
             x - radius < obstacle.x + obstacle.width &&
@@ -810,6 +834,22 @@ function isPositionInsideObstacle(x, y, radius = TANK_WIDTH / 2) {
         }
     }
     return false;
+}
+
+/** Keep player hull outside the monster boss circle (matches server separation). */
+function resolveOverlapWithMonster(x, y) {
+    if (!monsterTank) return { x, y };
+    const mind = MONSTER_SIZE / 2 + TANK_SIZE / 2;
+    const dx = x - monsterTank.x;
+    const dy = y - monsterTank.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist >= mind || dist < 1e-9) return { x, y };
+    const nx = dist < 1e-9 ? 1 : dx / dist;
+    const ny = dist < 1e-9 ? 0 : dy / dist;
+    return {
+        x: monsterTank.x + nx * mind,
+        y: monsterTank.y + ny * mind
+    };
 }
 
 // Game logic
@@ -880,9 +920,18 @@ function updatePlayer() {
                 localPlayer.y = 0;
             }
         } else {
-            // Normal: keep tank inside bounds
-            localPlayer.x = Math.max(TANK_WIDTH / 2, Math.min(ARENA_WIDTH - TANK_WIDTH / 2, localPlayer.x));
-            localPlayer.y = Math.max(TANK_HEIGHT / 2, Math.min(ARENA_HEIGHT - TANK_HEIGHT / 2, localPlayer.y));
+            // Normal: match server move clamp (server/index.js `move` handler)
+            localPlayer.x = Math.max(0, Math.min(ARENA_WIDTH, localPlayer.x));
+            localPlayer.y = Math.max(0, Math.min(ARENA_HEIGHT, localPlayer.y));
+        }
+
+        // Push out of monster boss hull (same idea as server; avoids feeling "stuck" inside)
+        if (!hasPhase && monsterTank) {
+            const r = resolveOverlapWithMonster(localPlayer.x, localPlayer.y);
+            localPlayer.x = r.x;
+            localPlayer.y = r.y;
+            localPlayer.x = Math.max(0, Math.min(ARENA_WIDTH, localPlayer.x));
+            localPlayer.y = Math.max(0, Math.min(ARENA_HEIGHT, localPlayer.y));
         }
 
         // Check collision with obstacles (skip while Phase is active)
@@ -908,7 +957,7 @@ function updatePlayer() {
 function shootBullet() {
     if (!localPlayer.id || localPlayer.isDead || localPlayer.isEliminated) return;
 
-    // Check fire rate based on machine gun power-up
+    // Base cadence: one shot per 1s; machine gun power-up allows rapid fire
     const now = Date.now();
     const hasMachineGun = localPlayer.activePowerups.machinegun &&
                          now < localPlayer.activePowerups.machinegun;
@@ -1093,7 +1142,7 @@ function updateBullets() {
                 const dy = bullet.y - monsterTank.y;
                 const distance = Math.sqrt(dx * dx + dy * dy);
 
-                if (distance < 40) {
+                if (distance < MONSTER_DIRECT_HIT_RADIUS) {
                     spawnParticles(bullet.x, bullet.y, '#FF4444');
                     socket.emit('shootMonster', {
                         x: bullet.x,
@@ -1500,7 +1549,7 @@ function drawMonsterTank() {
     const x = monsterTank.x;
     const y = monsterTank.y;
     const angle = monsterTank.angle;
-    const size = 60;
+    const size = MONSTER_SIZE;
 
     // Apply flash effect if recently hit (within 200ms)
     const isFlashing = monsterTank.flashTime && Date.now() - monsterTank.flashTime < 200;

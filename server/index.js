@@ -15,6 +15,9 @@ const ARENA_WIDTH = 800;
 const ARENA_HEIGHT = 600;
 const MAX_PLAYERS = 6;
 const TANK_SIZE = 40;
+// Must match client NORMAL_FIRE_RATE / RAPID_FIRE_RATE (public/game.js)
+const BASE_FIRE_RATE_MS = 1000;
+const RAPID_FIRE_RATE_MS = 80; // machine gun power-up
 
 // Power-up configuration
 const POWERUP_TYPES = ['shield', 'machinegun', 'phase', 'freeze', 'landmine', 'heatseeker', 'speed'];
@@ -150,6 +153,7 @@ let nextHeatseekerId = 0;
 // (Client still reports the exact hit point, but we only accept hits close to the latest shot path.)
 const lastShotByPlayer = new Map(); // socket.id -> {x, y, dirX, dirY, time}
 const lastCactusHitByPlayer = new Map(); // socket.id -> timestamp
+const lastPrimaryFireAtBySocket = new Map(); // socket.id -> timestamp (shoot / freezeBullet / heatseeker)
 const CACTUS_HIT_COOLDOWN_MS = 200;
 
 function validateCactusHit(playerId, x, y) {
@@ -177,6 +181,24 @@ function validateCactusHit(playerId, x, y) {
   const lastHitAt = lastCactusHitByPlayer.get(playerId) || 0;
   if (now - lastHitAt < CACTUS_HIT_COOLDOWN_MS) return false;
 
+  return true;
+}
+
+function hasMachineGunPowerup(player) {
+  return (
+    player.activePowerups &&
+    player.activePowerups.machinegun &&
+    Date.now() < player.activePowerups.machinegun
+  );
+}
+
+/** Enforces base 1s cadence, or rapid fire when machine gun is active. */
+function consumePrimaryFireIfAllowed(socketId, player) {
+  const now = Date.now();
+  const interval = hasMachineGunPowerup(player) ? RAPID_FIRE_RATE_MS : BASE_FIRE_RATE_MS;
+  const last = lastPrimaryFireAtBySocket.get(socketId) || 0;
+  if (now - last < interval) return false;
+  lastPrimaryFireAtBySocket.set(socketId, now);
   return true;
 }
 
@@ -297,6 +319,55 @@ function isPositionInsideObstacle(x, y, radius = TANK_SIZE / 2) {
         x - radius < tile.x + tile.width &&
         y + radius > tile.y &&
         y - radius < tile.y + tile.height) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Distance from point P to segment AB (for point-blank monster bullet hits along the beam). */
+function distPointToSegment(px, py, ax, ay, bx, by) {
+  const abx = bx - ax;
+  const aby = by - ay;
+  const len2 = abx * abx + aby * aby;
+  if (len2 < 1e-6) return Math.hypot(px - ax, py - ay);
+  let t = ((px - ax) * abx + (py - ay) * aby) / len2;
+  t = Math.max(0, Math.min(1, t));
+  const qx = ax + t * abx;
+  const qy = ay + t * aby;
+  return Math.hypot(px - qx, py - qy);
+}
+
+/** Player tank center must stay at least this far from monster center (circle vs circle). */
+function minDistancePlayerFromMonsterCenter() {
+  return MONSTER_SIZE / 2 + TANK_SIZE / 2;
+}
+
+function pushPlayerOutOfMonsterIfOverlapping(player) {
+  if (!monsterTank || monsterTank.health <= 0) return;
+  const mind = minDistancePlayerFromMonsterCenter();
+  const dx = player.x - monsterTank.x;
+  const dy = player.y - monsterTank.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist >= mind || dist < 1e-9) return;
+  const nx = dist < 1e-9 ? 1 : dx / dist;
+  const ny = dist < 1e-9 ? 0 : dy / dist;
+  player.x = monsterTank.x + nx * mind;
+  player.y = monsterTank.y + ny * mind;
+  player.x = Math.max(0, Math.min(ARENA_WIDTH, player.x));
+  player.y = Math.max(0, Math.min(ARENA_HEIGHT, player.y));
+  if (isPositionInsideObstacle(player.x, player.y, TANK_SIZE / 2)) {
+    player.x = monsterTank.x + nx * (mind + 2);
+    player.y = monsterTank.y + ny * (mind + 2);
+    player.x = Math.max(0, Math.min(ARENA_WIDTH, player.x));
+    player.y = Math.max(0, Math.min(ARENA_HEIGHT, player.y));
+  }
+}
+
+function monsterCenterWouldOverlapPlayer(mx, my, monsterRadius) {
+  for (const p of players.values()) {
+    if (p.isDead || p.isEliminated) continue;
+    if (Math.hypot(p.x - mx, p.y - my) < monsterRadius + TANK_SIZE / 2 - 0.5) {
       return true;
     }
   }
@@ -482,6 +553,7 @@ function updateMonsterTankAI() {
 
     const canGo = (x, y) =>
       !isPositionInsideObstacle(x, y, moveR) &&
+      !monsterCenterWouldOverlapPlayer(x, y, moveR) &&
       x > moveR + BORDER_THICKNESS && x < ARENA_WIDTH - moveR - BORDER_THICKNESS &&
       y > moveR + BORDER_THICKNESS && y < ARENA_HEIGHT - moveR - BORDER_THICKNESS;
 
@@ -562,6 +634,8 @@ function updateMonsterTankAI() {
         id: nextMonsterBulletId++,
         x: bulletX,
         y: bulletY,
+        originX: monsterTank.x,
+        originY: monsterTank.y,
         velocityX: Math.cos(monsterTank.angle) * 8,
         velocityY: Math.sin(monsterTank.angle) * 8
       };
@@ -613,16 +687,30 @@ function updateMonsterBullets() {
       continue;
     }
 
-    // Check collision with players
+    // Check collision with players (point + beam segment for point-blank shots)
+    const hitR = TANK_SIZE / 2 + 6;
     for (const [playerId, player] of players.entries()) {
       if (player.isDead || player.isEliminated) continue;
 
       const dx = bullet.x - player.x;
       const dy = bullet.y - player.y;
       const distance = Math.sqrt(dx * dx + dy * dy);
+      let hit = distance < hitR;
 
-      if (distance < 20) {
-        // Hit player!
+      if (!hit) {
+        const dSegMove = distPointToSegment(player.x, player.y, prevX, prevY, bullet.x, bullet.y);
+        if (dSegMove < hitR) hit = true;
+      }
+      if (!hit && bullet.originX != null && bullet.originY != null) {
+        const dBeam = distPointToSegment(
+          player.x, player.y,
+          bullet.originX, bullet.originY,
+          bullet.x, bullet.y
+        );
+        if (dBeam < hitR) hit = true;
+      }
+
+      if (hit) {
         monsterBullets.splice(i, 1);
         applyDamageToPlayer(playerId, player, DAMAGE_MONSTER_BULLET, 'monster', 0);
         break;
@@ -787,6 +875,10 @@ io.on('connection', (socket) => {
     player.y = nextY;
     if (data.angle !== undefined) player.angle = data.angle;
 
+    if (!hasPhase) {
+      pushPlayerOutOfMonsterIfOverlapping(player);
+    }
+
     // Check for mine collision (all mines except own)
     for (const [mineId, mine] of mines.entries()) {
       if (mine.playerId !== socket.id) {
@@ -848,6 +940,7 @@ io.on('connection', (socket) => {
     if (gameEnded) return;
     const shooter = players.get(socket.id);
     if (!shooter || shooter.isDead || shooter.isEliminated) return;
+    if (!consumePrimaryFireIfAllowed(socket.id, shooter)) return;
 
     // Store last shot for basic hit validation (e.g., cactus hits)
     const shotSpeed = Math.hypot(data.velocityX || 0, data.velocityY || 0);
@@ -900,6 +993,7 @@ io.on('connection', (socket) => {
   socket.on('freezeBullet', (data) => {
     const shooter = players.get(socket.id);
     if (!shooter || shooter.isDead || shooter.isEliminated) return;
+    if (!consumePrimaryFireIfAllowed(socket.id, shooter)) return;
 
     // Broadcast freeze bullet to all clients
     io.emit('freezeBulletFired', {
@@ -995,6 +1089,7 @@ io.on('connection', (socket) => {
     if (gameEnded) return;
     const shooter = players.get(socket.id);
     if (!shooter || shooter.isDead || shooter.isEliminated) return;
+    if (!consumePrimaryFireIfAllowed(socket.id, shooter)) return;
 
     const heatseeker = {
       id: nextHeatseekerId++,
@@ -1016,7 +1111,7 @@ io.on('connection', (socket) => {
     console.log(`Player ${shooter.name} fired heatseeker`);
   });
 
-  // Handle shootMonster event
+  // Handle shootMonster event (follow-up to a bullet already fired via `shoot`; no extra fire-rate tick)
   socket.on('shootMonster', (data) => {
     const shooter = players.get(socket.id);
     if (!shooter || shooter.isDead || shooter.isEliminated || !monsterTank) return;
@@ -1090,6 +1185,7 @@ io.on('connection', (socket) => {
       }
 
       players.delete(socket.id);
+      lastPrimaryFireAtBySocket.delete(socket.id);
       io.emit('playerLeft', socket.id);
       checkAllEliminated();
     }
@@ -1107,6 +1203,7 @@ io.on('connection', (socket) => {
       }
 
       players.delete(socket.id);
+      lastPrimaryFireAtBySocket.delete(socket.id);
       io.emit('playerLeft', socket.id);
       checkAllEliminated();
     }
@@ -1152,6 +1249,7 @@ function endRound() {
 
   lastShotByPlayer.clear();
   lastCactusHitByPlayer.clear();
+  lastPrimaryFireAtBySocket.clear();
 
   // Allow new round joins after the client finishes its 8s round-over UI delay
   setTimeout(() => {
