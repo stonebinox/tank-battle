@@ -167,6 +167,8 @@ const TANK_WIDTH = 30;
 const TANK_HEIGHT = 20;
 // Hit/collision radius for movement vs tiles — must match server TANK_SIZE (server/index.js)
 const TANK_SIZE = 40;
+// Boss body size — must match server MONSTER_SIZE (server/index.js)
+const MONSTER_SIZE = 60;
 // Server validates shootMonster within this distance (see server shootMonster handler)
 const MONSTER_DIRECT_HIT_RADIUS = 55;
 const TANK_SPEED = 3;
@@ -834,6 +836,22 @@ function isPositionInsideObstacle(x, y, radius = TANK_SIZE / 2) {
     return false;
 }
 
+/** Keep player hull outside the monster boss circle (matches server separation). */
+function resolveOverlapWithMonster(x, y) {
+    if (!monsterTank) return { x, y };
+    const mind = MONSTER_SIZE / 2 + TANK_SIZE / 2;
+    const dx = x - monsterTank.x;
+    const dy = y - monsterTank.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist >= mind || dist < 1e-9) return { x, y };
+    const nx = dist < 1e-9 ? 1 : dx / dist;
+    const ny = dist < 1e-9 ? 0 : dy / dist;
+    return {
+        x: monsterTank.x + nx * mind,
+        y: monsterTank.y + ny * mind
+    };
+}
+
 // Game logic
 function updatePlayer() {
     if (gameOverData) return;
@@ -903,6 +921,15 @@ function updatePlayer() {
             }
         } else {
             // Normal: match server move clamp (server/index.js `move` handler)
+            localPlayer.x = Math.max(0, Math.min(ARENA_WIDTH, localPlayer.x));
+            localPlayer.y = Math.max(0, Math.min(ARENA_HEIGHT, localPlayer.y));
+        }
+
+        // Push out of monster boss hull (same idea as server; avoids feeling "stuck" inside)
+        if (!hasPhase && monsterTank) {
+            const r = resolveOverlapWithMonster(localPlayer.x, localPlayer.y);
+            localPlayer.x = r.x;
+            localPlayer.y = r.y;
             localPlayer.x = Math.max(0, Math.min(ARENA_WIDTH, localPlayer.x));
             localPlayer.y = Math.max(0, Math.min(ARENA_HEIGHT, localPlayer.y));
         }
@@ -1522,7 +1549,7 @@ function drawMonsterTank() {
     const x = monsterTank.x;
     const y = monsterTank.y;
     const angle = monsterTank.angle;
-    const size = 60;
+    const size = MONSTER_SIZE;
 
     // Apply flash effect if recently hit (within 200ms)
     const isFlashing = monsterTank.flashTime && Date.now() - monsterTank.flashTime < 200;

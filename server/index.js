@@ -325,6 +325,55 @@ function isPositionInsideObstacle(x, y, radius = TANK_SIZE / 2) {
   return false;
 }
 
+/** Distance from point P to segment AB (for point-blank monster bullet hits along the beam). */
+function distPointToSegment(px, py, ax, ay, bx, by) {
+  const abx = bx - ax;
+  const aby = by - ay;
+  const len2 = abx * abx + aby * aby;
+  if (len2 < 1e-6) return Math.hypot(px - ax, py - ay);
+  let t = ((px - ax) * abx + (py - ay) * aby) / len2;
+  t = Math.max(0, Math.min(1, t));
+  const qx = ax + t * abx;
+  const qy = ay + t * aby;
+  return Math.hypot(px - qx, py - qy);
+}
+
+/** Player tank center must stay at least this far from monster center (circle vs circle). */
+function minDistancePlayerFromMonsterCenter() {
+  return MONSTER_SIZE / 2 + TANK_SIZE / 2;
+}
+
+function pushPlayerOutOfMonsterIfOverlapping(player) {
+  if (!monsterTank || monsterTank.health <= 0) return;
+  const mind = minDistancePlayerFromMonsterCenter();
+  const dx = player.x - monsterTank.x;
+  const dy = player.y - monsterTank.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist >= mind || dist < 1e-9) return;
+  const nx = dist < 1e-9 ? 1 : dx / dist;
+  const ny = dist < 1e-9 ? 0 : dy / dist;
+  player.x = monsterTank.x + nx * mind;
+  player.y = monsterTank.y + ny * mind;
+  player.x = Math.max(0, Math.min(ARENA_WIDTH, player.x));
+  player.y = Math.max(0, Math.min(ARENA_HEIGHT, player.y));
+  if (isPositionInsideObstacle(player.x, player.y, TANK_SIZE / 2)) {
+    player.x = monsterTank.x + nx * (mind + 2);
+    player.y = monsterTank.y + ny * (mind + 2);
+    player.x = Math.max(0, Math.min(ARENA_WIDTH, player.x));
+    player.y = Math.max(0, Math.min(ARENA_HEIGHT, player.y));
+  }
+}
+
+function monsterCenterWouldOverlapPlayer(mx, my, monsterRadius) {
+  for (const p of players.values()) {
+    if (p.isDead || p.isEliminated) continue;
+    if (Math.hypot(p.x - mx, p.y - my) < monsterRadius + TANK_SIZE / 2 - 0.5) {
+      return true;
+    }
+  }
+  return false;
+}
+
 
 // Damage a cactus tile at position; returns the hit tile or null
 function damageCactusAt(x, y) {
@@ -504,6 +553,7 @@ function updateMonsterTankAI() {
 
     const canGo = (x, y) =>
       !isPositionInsideObstacle(x, y, moveR) &&
+      !monsterCenterWouldOverlapPlayer(x, y, moveR) &&
       x > moveR + BORDER_THICKNESS && x < ARENA_WIDTH - moveR - BORDER_THICKNESS &&
       y > moveR + BORDER_THICKNESS && y < ARENA_HEIGHT - moveR - BORDER_THICKNESS;
 
@@ -584,6 +634,8 @@ function updateMonsterTankAI() {
         id: nextMonsterBulletId++,
         x: bulletX,
         y: bulletY,
+        originX: monsterTank.x,
+        originY: monsterTank.y,
         velocityX: Math.cos(monsterTank.angle) * 8,
         velocityY: Math.sin(monsterTank.angle) * 8
       };
@@ -635,16 +687,30 @@ function updateMonsterBullets() {
       continue;
     }
 
-    // Check collision with players
+    // Check collision with players (point + beam segment for point-blank shots)
+    const hitR = TANK_SIZE / 2 + 6;
     for (const [playerId, player] of players.entries()) {
       if (player.isDead || player.isEliminated) continue;
 
       const dx = bullet.x - player.x;
       const dy = bullet.y - player.y;
       const distance = Math.sqrt(dx * dx + dy * dy);
+      let hit = distance < hitR;
 
-      if (distance < 20) {
-        // Hit player!
+      if (!hit) {
+        const dSegMove = distPointToSegment(player.x, player.y, prevX, prevY, bullet.x, bullet.y);
+        if (dSegMove < hitR) hit = true;
+      }
+      if (!hit && bullet.originX != null && bullet.originY != null) {
+        const dBeam = distPointToSegment(
+          player.x, player.y,
+          bullet.originX, bullet.originY,
+          bullet.x, bullet.y
+        );
+        if (dBeam < hitR) hit = true;
+      }
+
+      if (hit) {
         monsterBullets.splice(i, 1);
         applyDamageToPlayer(playerId, player, DAMAGE_MONSTER_BULLET, 'monster', 0);
         break;
@@ -808,6 +874,10 @@ io.on('connection', (socket) => {
     player.x = nextX;
     player.y = nextY;
     if (data.angle !== undefined) player.angle = data.angle;
+
+    if (!hasPhase) {
+      pushPlayerOutOfMonsterIfOverlapping(player);
+    }
 
     // Check for mine collision (all mines except own)
     for (const [mineId, mine] of mines.entries()) {
