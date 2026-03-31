@@ -15,6 +15,9 @@ const ARENA_WIDTH = 800;
 const ARENA_HEIGHT = 600;
 const MAX_PLAYERS = 6;
 const TANK_SIZE = 40;
+// Must match client NORMAL_FIRE_RATE / RAPID_FIRE_RATE (public/game.js)
+const BASE_FIRE_RATE_MS = 1500;
+const RAPID_FIRE_RATE_MS = 80; // machine gun power-up
 
 // Power-up configuration
 const POWERUP_TYPES = ['shield', 'machinegun', 'phase', 'freeze', 'landmine', 'heatseeker', 'speed'];
@@ -150,6 +153,7 @@ let nextHeatseekerId = 0;
 // (Client still reports the exact hit point, but we only accept hits close to the latest shot path.)
 const lastShotByPlayer = new Map(); // socket.id -> {x, y, dirX, dirY, time}
 const lastCactusHitByPlayer = new Map(); // socket.id -> timestamp
+const lastPrimaryFireAtBySocket = new Map(); // socket.id -> timestamp (shoot / freezeBullet / heatseeker)
 const CACTUS_HIT_COOLDOWN_MS = 200;
 
 function validateCactusHit(playerId, x, y) {
@@ -177,6 +181,24 @@ function validateCactusHit(playerId, x, y) {
   const lastHitAt = lastCactusHitByPlayer.get(playerId) || 0;
   if (now - lastHitAt < CACTUS_HIT_COOLDOWN_MS) return false;
 
+  return true;
+}
+
+function hasMachineGunPowerup(player) {
+  return (
+    player.activePowerups &&
+    player.activePowerups.machinegun &&
+    Date.now() < player.activePowerups.machinegun
+  );
+}
+
+/** Enforces base 1.5s cadence, or rapid fire when machine gun is active. */
+function consumePrimaryFireIfAllowed(socketId, player) {
+  const now = Date.now();
+  const interval = hasMachineGunPowerup(player) ? RAPID_FIRE_RATE_MS : BASE_FIRE_RATE_MS;
+  const last = lastPrimaryFireAtBySocket.get(socketId) || 0;
+  if (now - last < interval) return false;
+  lastPrimaryFireAtBySocket.set(socketId, now);
   return true;
 }
 
@@ -848,6 +870,7 @@ io.on('connection', (socket) => {
     if (gameEnded) return;
     const shooter = players.get(socket.id);
     if (!shooter || shooter.isDead || shooter.isEliminated) return;
+    if (!consumePrimaryFireIfAllowed(socket.id, shooter)) return;
 
     // Store last shot for basic hit validation (e.g., cactus hits)
     const shotSpeed = Math.hypot(data.velocityX || 0, data.velocityY || 0);
@@ -900,6 +923,7 @@ io.on('connection', (socket) => {
   socket.on('freezeBullet', (data) => {
     const shooter = players.get(socket.id);
     if (!shooter || shooter.isDead || shooter.isEliminated) return;
+    if (!consumePrimaryFireIfAllowed(socket.id, shooter)) return;
 
     // Broadcast freeze bullet to all clients
     io.emit('freezeBulletFired', {
@@ -995,6 +1019,7 @@ io.on('connection', (socket) => {
     if (gameEnded) return;
     const shooter = players.get(socket.id);
     if (!shooter || shooter.isDead || shooter.isEliminated) return;
+    if (!consumePrimaryFireIfAllowed(socket.id, shooter)) return;
 
     const heatseeker = {
       id: nextHeatseekerId++,
@@ -1090,6 +1115,7 @@ io.on('connection', (socket) => {
       }
 
       players.delete(socket.id);
+      lastPrimaryFireAtBySocket.delete(socket.id);
       io.emit('playerLeft', socket.id);
       checkAllEliminated();
     }
@@ -1107,6 +1133,7 @@ io.on('connection', (socket) => {
       }
 
       players.delete(socket.id);
+      lastPrimaryFireAtBySocket.delete(socket.id);
       io.emit('playerLeft', socket.id);
       checkAllEliminated();
     }
@@ -1152,6 +1179,7 @@ function endRound() {
 
   lastShotByPlayer.clear();
   lastCactusHitByPlayer.clear();
+  lastPrimaryFireAtBySocket.clear();
 
   // Allow new round joins after the client finishes its 8s round-over UI delay
   setTimeout(() => {

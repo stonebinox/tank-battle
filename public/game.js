@@ -165,14 +165,16 @@ const ARENA_WIDTH = 800;
 const ARENA_HEIGHT = 600;
 const TANK_WIDTH = 30;
 const TANK_HEIGHT = 20;
-// Hit/collision radius for movement vs tiles — must match server TANK_SIZE (see server/index.js)
+// Hit/collision radius for movement vs tiles — must match server TANK_SIZE (server/index.js)
 const TANK_SIZE = 40;
+// Server validates shootMonster within this distance (see server shootMonster handler)
+const MONSTER_DIRECT_HIT_RADIUS = 55;
 const TANK_SPEED = 3;
 const BULLET_SPEED = 8;
 const BULLET_RADIUS = 4;
 const COLLISION_DISTANCE = 20;
-const NORMAL_FIRE_RATE = 500; // 500ms between shots
-const RAPID_FIRE_RATE = 80;   // 80ms between shots for machine gun
+const NORMAL_FIRE_RATE = 1500; // 1.5s between normal shots
+const RAPID_FIRE_RATE = 80;    // machine gun power-up only
 
 // Local player state
 let localPlayer = {
@@ -501,7 +503,7 @@ socket.on('gameState', (playersArray) => {
     }
     players = playersObj;
 
-    // Authoritative snapshot: keep local movement/shooting aligned with what we draw
+    // Authoritative snapshot: draw uses `players`; keep local movement/shooting aligned
     if (localPlayer.id && players[localPlayer.id]) {
         const p = players[localPlayer.id];
         localPlayer.x = p.x;
@@ -521,7 +523,6 @@ socket.on('playerMoved', (data) => {
         players[data.id].y = data.y;
         players[data.id].angle = data.angle;
     }
-    // Keep local movement/shooting state in sync with server (same as players[id] used for drawing)
     if (localPlayer.id && data.id === localPlayer.id) {
         localPlayer.x = data.x;
         localPlayer.y = data.y;
@@ -564,6 +565,11 @@ socket.on('playerHit', (data) => {
         players[data.playerId].lives = data.lives;
         if (data.health !== undefined) players[data.playerId].health = data.health;
         if (data.maxHealth !== undefined) players[data.playerId].maxHealth = data.maxHealth;
+    }
+    if (data.playerId === localPlayer.id) {
+        if (data.lives !== undefined) localPlayer.lives = data.lives;
+        if (data.health !== undefined) localPlayer.health = data.health;
+        if (data.maxHealth !== undefined) localPlayer.maxHealth = data.maxHealth;
     }
     // Update killer's score
     if (players[data.killerId]) {
@@ -896,9 +902,9 @@ function updatePlayer() {
                 localPlayer.y = 0;
             }
         } else {
-            // Normal: keep tank inside bounds
-            localPlayer.x = Math.max(TANK_WIDTH / 2, Math.min(ARENA_WIDTH - TANK_WIDTH / 2, localPlayer.x));
-            localPlayer.y = Math.max(TANK_HEIGHT / 2, Math.min(ARENA_HEIGHT - TANK_HEIGHT / 2, localPlayer.y));
+            // Normal: match server move clamp (server/index.js `move` handler)
+            localPlayer.x = Math.max(0, Math.min(ARENA_WIDTH, localPlayer.x));
+            localPlayer.y = Math.max(0, Math.min(ARENA_HEIGHT, localPlayer.y));
         }
 
         // Check collision with obstacles (skip while Phase is active)
@@ -924,7 +930,7 @@ function updatePlayer() {
 function shootBullet() {
     if (!localPlayer.id || localPlayer.isDead || localPlayer.isEliminated) return;
 
-    // Check fire rate based on machine gun power-up
+    // Base cadence: one shot per 1.5s; machine gun power-up allows rapid fire
     const now = Date.now();
     const hasMachineGun = localPlayer.activePowerups.machinegun &&
                          now < localPlayer.activePowerups.machinegun;
@@ -1109,7 +1115,7 @@ function updateBullets() {
                 const dy = bullet.y - monsterTank.y;
                 const distance = Math.sqrt(dx * dx + dy * dy);
 
-                if (distance < 40) {
+                if (distance < MONSTER_DIRECT_HIT_RADIUS) {
                     spawnParticles(bullet.x, bullet.y, '#FF4444');
                     socket.emit('shootMonster', {
                         x: bullet.x,
