@@ -16,7 +16,7 @@ const ARENA_HEIGHT = 600;
 const MAX_PLAYERS = 6;
 const TANK_SIZE = 40;
 // Must match client NORMAL_FIRE_RATE / RAPID_FIRE_RATE (public/game.js)
-const BASE_FIRE_RATE_MS = 1500;
+const BASE_FIRE_RATE_MS = 1000;
 const RAPID_FIRE_RATE_MS = 80; // machine gun power-up
 
 // Power-up configuration
@@ -192,7 +192,7 @@ function hasMachineGunPowerup(player) {
   );
 }
 
-/** Enforces base 1.5s cadence, or rapid fire when machine gun is active. */
+/** Enforces base 1s cadence, or rapid fire when machine gun is active. */
 function consumePrimaryFireIfAllowed(socketId, player) {
   const now = Date.now();
   const interval = hasMachineGunPowerup(player) ? RAPID_FIRE_RATE_MS : BASE_FIRE_RATE_MS;

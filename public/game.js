@@ -173,7 +173,7 @@ const TANK_SPEED = 3;
 const BULLET_SPEED = 8;
 const BULLET_RADIUS = 4;
 const COLLISION_DISTANCE = 20;
-const NORMAL_FIRE_RATE = 1500; // 1.5s between normal shots
+const NORMAL_FIRE_RATE = 1000; // 1s between normal shots
 const RAPID_FIRE_RATE = 80;    // machine gun power-up only
 
 // Local player state
@@ -930,7 +930,7 @@ function updatePlayer() {
 function shootBullet() {
     if (!localPlayer.id || localPlayer.isDead || localPlayer.isEliminated) return;
 
-    // Base cadence: one shot per 1.5s; machine gun power-up allows rapid fire
+    // Base cadence: one shot per 1s; machine gun power-up allows rapid fire
     const now = Date.now();
     const hasMachineGun = localPlayer.activePowerups.machinegun &&
                          now < localPlayer.activePowerups.machinegun;
